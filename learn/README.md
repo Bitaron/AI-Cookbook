@@ -12,6 +12,23 @@ Needs [Bun](https://bun.sh) and Claude Code. Claude Code must be logged in, or `
 ./install.sh --uninstall
 ```
 
+### Update
+
+```sh
+learn update --check    # show what's new, change nothing
+learn update            # pull, rebuild and restart the server
+```
+
+`learn update` is safe to run at any time:
+- It only fast-forwards. It stops without changing anything if you have local edits in this folder or your branch has diverged.
+- If Claude is in the middle of a turn, it waits for the turn to finish. Add `--force` to skip the wait.
+- It reinstalls dependencies only when they changed, and rebuilds the web app.
+- If that fails, it rolls back to the version you had, and the running server keeps working.
+- It restarts the server, or the systemd service if you installed with `--service`. Open lesson pages reconnect by themselves.
+- Your lessons in `~/.learn` are never touched.
+
+If you update with plain `git pull` instead, run `learn update` afterwards to rebuild and restart the server.
+
 ## Use
 
 ```sh
@@ -20,7 +37,8 @@ learn --scratch "binary search"      # new lesson in an empty scratch folder
 learn --model opus "CRDTs"           # pick the model for this lesson
 learn --library                      # browse past lessons
 learn --resume <id>                  # continue a lesson live
-learn stop                           # stop the background server
+learn stop                           # stop the background server (refuses mid-turn; --force to override)
+learn update                         # update learn safely (see Update above)
 ```
 
 Inside Claude Code, `/learn <topic>` writes a short summary of what you're working on and passes it to the tutor. The lesson then starts from your real context.

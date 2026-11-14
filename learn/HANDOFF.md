@@ -76,12 +76,13 @@ install.sh                symlinks CLI + skill; --service adds a systemd user un
 
 ```sh
 bun install && bun run build
-bun run test                    # 17 unit + 15 e2e; e2e needs: bunx playwright install chromium-headless-shell
+bun run test                    # 17 unit + 16 e2e; e2e needs: bunx playwright install chromium-headless-shell
 bun run typecheck
 LEARN_FAKE_AGENT=1 LEARN_HOME=/tmp/lh LEARN_PORT=4799 bun server/index.ts   # UI work, no tokens
 claude --plugin-dir ./ then /learn:learn <topic>                           # test the skill without installing
 ./install.sh [--service]        # real install (not done on the dev machine yet)
-bin/learn stop                  # stop the background server
+bin/learn stop                  # stop the background server (graceful, via POST /api/shutdown)
+bin/learn update                # fast-forward from upstream, rebuild, restart (rolls back on failure)
 ```
 
 Rebuild (`bun run build`) after any change under `web/`. Saved lessons inline `web/dist/offline.js`, so existing `lesson.html` files only pick up changes the next time their lesson is saved.
@@ -105,7 +106,13 @@ Rebuild (`bun run build`) after any change under `web/`. Saved lessons inline `w
   - right-click quoting of text and animation frames;
   - the transcript;
   - the saved lesson working offline;
-  - the library.
+  - the library;
+  - server info and graceful shutdown (refused while Claude is mid-turn).
+- `learn update` was checked by hand against a local git remote:
+  - it waits for a running turn, and `--force` skips the wait;
+  - a broken upstream build rolls back, and the server and `web/dist` stay untouched;
+  - after a plain `git pull`, it spots the out-of-date server and restarts it;
+  - it refuses when there are local edits.
 - Real Claude runs:
 
   | Run | Model | Result |
@@ -124,7 +131,8 @@ Rebuild (`bun run build`) after any change under `web/`. Saved lessons inline `w
 - **Saved lessons aren't refreshed.** Lessons saved before an update keep the old offline runtime until they're saved again.
 - **Fonts are system fonts.** Webfonts would bloat offline files, so the look varies by OS. On Fedora the serif falls back to DejaVu or Liberation.
 - **Untested environments:** touch screens (long-press opens the native menu) and Safari (no View Transitions, so the theme switch cross-fades).
-- **`learn stop` is blunt:** it uses `pkill -f <repo>/server/index.ts`.
+- **Updating needs a git checkout.** `learn update` fast-forwards the current branch from its upstream. Installs that aren't git checkouts have to be updated by hand.
+- **The CLI doesn't restart an out-of-date server by itself.** `learn <topic>` reuses whatever server is running. `learn update` (or `--check`) compares the server's `code` commit from `GET /api/server` with the checkout and restarts it.
 - **Single user, localhost only.** Phone or LAN access was deliberately left out.
 
 ## Risks
