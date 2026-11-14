@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-mode="live">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>learn</title>
+<link rel="stylesheet" href="/assets/styles.css">
+<script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><a href="/" title="Library">learn</a></div>
+  <h1 class="lesson-title" title="Click to rename"></h1>
+  <div class="meta"></div>
+  <nav class="tabs" hidden><button data-tab="lesson" class="is-on">Lesson</button><button data-tab="transcript">Transcript</button></nav>
+  <button class="theme-toggle" title="Switch light or dark theme" aria-label="Switch theme"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor"/></svg></button>
+</header>
+<div class="live-banner" hidden></div>
+
+<main class="library" hidden>
+  <input class="lib-search" placeholder="Search lessons, tags, folders…" aria-label="Search lessons">
+  <div class="lib-list"></div>
+</main>
+
+<main class="layout" hidden>
+  <nav class="outline" aria-label="Lesson outline"></nav>
+  <article id="canvas" class="canvas" aria-live="polite"></article>
+  <aside class="chat" aria-label="Chat">
+    <div class="chat-log"></div>
+    <div class="composer">
+      <div class="mentions" hidden></div>
+      <div class="shortcuts">
+        <button data-say="Give me an analogy for the current idea.">Analogy</button>
+        <button data-say="Quiz me on what we've covered so far.">Quiz me</button>
+        <button data-say="Show a concrete example.">Example</button>
+        <button data-say="Go one level deeper.">Go deeper</button>
+        <button data-say="Wrap up: add a short recap section with the key takeaways.">Wrap up</button>
+      </div>
+      <div class="input-wrap">
+        <div class="attachments"></div>
+        <textarea rows="2" placeholder="Ask anything. @ mentions a file, and you can paste images." aria-label="Message"></textarea>
+        <div class="input-row">
+          <button class="undo-btn" title="Undo Claude's last canvas change" disabled>Undo</button>
+          <span class="spacer"></span>
+          <button class="stop-btn" hidden>Stop</button>
+          <button class="send-btn" disabled>Send</button>
+        </div>
+      </div>
+      <div class="meter"></div>
+    </div>
+  </aside>
+  <section class="transcript" hidden></section>
+</main>
+<div class="modal-root"></div>
+</body>
+</html>

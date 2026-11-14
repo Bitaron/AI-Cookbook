@@ -1,0 +1,102 @@
+#!/usr/bin/env bun
+// learn: open a visual Claude Code tutor in your browser.
+import { parseArgs } from "node:util";
+import { readFileSync, openSync, existsSync, realpathSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
+import { spawn } from "node:child_process";
+
+const ROOT = join(dirname(realpathSync(import.meta.path)), "..");
+const { HOME, PORT, HOST, getToken, ensureDirs } = await import(join(ROOT, "server", "config.ts"));
+
+const HELP = `learn: a visual Claude Code tutor in your browser
+
+Usage
+  learn <topic…>                 start a new lesson in the current folder
+  learn --resume <id>            reopen a saved lesson (live)
+  learn --library                open your lesson library
+  learn server                   run the server in the foreground
+  learn stop                     stop the background server
+
+Options
+  --scratch                      work in an empty scratch folder instead of the current one
+  --model <name>                 model for this lesson (default: your Claude Code setting)
+  --context-file <path>          extra context for the first message (used by /learn)
+  --cwd <dir>                    folder Claude works in (default: current folder)
+  --no-open                      print the URL instead of opening a browser
+`;
+
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: {
+    resume: { type: "string" }, library: { type: "boolean" }, scratch: { type: "boolean" },
+    model: { type: "string" }, "context-file": { type: "string" }, cwd: { type: "string" },
+    "no-open": { type: "boolean" }, help: { type: "boolean", short: "h" },
+  },
+});
+
+const base = `http://${HOST}:${PORT}`;
+const token: string = getToken();
+
+async function healthy(): Promise<boolean> {
+  try { return (await fetch(`${base}/health`, { signal: AbortSignal.timeout(800) })).ok; } catch { return false; }
+}
+
+async function ensureServer() {
+  if (await healthy()) return;
+  ensureDirs();
+  if (!existsSync(join(ROOT, "web", "dist", "app.js"))) {
+    console.error("learn: building the web app (first run)…");
+    const b = Bun.spawnSync(["bun", join(ROOT, "scripts", "build.ts")], { stdout: "inherit", stderr: "inherit" });
+    if (b.exitCode !== 0) process.exit(1);
+  }
+  const log = openSync(join(HOME, "server.log"), "a");
+  const child = spawn(process.execPath, [join(ROOT, "server", "index.ts")], { detached: true, stdio: ["ignore", log, log], env: process.env });
+  child.unref();
+  for (let i = 0; i < 50; i++) {
+    await Bun.sleep(150);
+    if (await healthy()) return;
+  }
+  console.error(`learn: the server didn't start. See ${join(HOME, "server.log")}`);
+  process.exit(1);
+}
+
+function openUrl(url: string) {
+  if (values["no-open"]) { console.log(url); return; }
+  const cmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  try {
+    spawn(cmd, [url], { detached: true, stdio: "ignore" }).unref();
+    console.log(`learn: opened ${url.replace(/[?&]t=[^&]+/, "")}`);
+  } catch {
+    console.log(url);
+  }
+}
+const withToken = (url: string) => `${url}${url.includes("?") ? "&" : "?"}t=${encodeURIComponent(token)}`;
+
+if (values.help) { console.log(HELP); process.exit(0); }
+
+if (positionals[0] === "server" && positionals.length === 1) {
+  await import(join(ROOT, "server", "index.ts"));
+} else if (positionals[0] === "stop" && positionals.length === 1) {
+  const r = Bun.spawnSync(["pkill", "-f", join(ROOT, "server", "index.ts")]);
+  console.log(r.exitCode === 0 ? "learn: server stopped" : "learn: server wasn't running");
+} else if (values.library) {
+  await ensureServer();
+  openUrl(withToken(`${base}/`));
+} else if (values.resume) {
+  await ensureServer();
+  openUrl(withToken(`${base}/l/${encodeURIComponent(values.resume)}`));
+} else {
+  const topic = positionals.join(" ").trim();
+  if (!topic) { console.log(HELP); process.exit(1); }
+  await ensureServer();
+  const context = values["context-file"] && existsSync(values["context-file"]) ? readFileSync(values["context-file"], "utf8") : undefined;
+  const r = await fetch(`${base}/api/lessons`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-learn-token": token },
+    body: JSON.stringify({ topic, context, cwd: resolve(values.cwd ?? process.cwd()), scratch: !!values.scratch, model: values.model }),
+  });
+  if (!r.ok) { console.error(`learn: couldn't start the lesson (${r.status}): ${await r.text()}`); process.exit(1); }
+  const { id, url } = await r.json() as { id: string; url: string };
+  openUrl(withToken(url));
+  console.log(`learn: lesson ${id}. Reopen any time with: learn --resume ${id}`);
+}
