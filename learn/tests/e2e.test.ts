@@ -230,3 +230,29 @@ test("library lists the lesson, static index too", async () => {
 test("no browser errors", () => {
   expect(errors.filter(e => !/favicon/.test(e))).toEqual([]);
 });
+
+test("server info and graceful shutdown (used by learn stop / update)", async () => {
+  expect((await fetch(`${base}/api/server`)).status).toBe(401);
+  const info = await (await api("/api/server")).json() as any;
+  expect(info.pid).toBe(process.pid);
+  expect(info.busy).toEqual([]);
+  expect(typeof info.code === "string" || info.code === null).toBe(true);
+
+  // A separate server, so the shared one stays up for the other tests.
+  let stopped = false;
+  const other = startServer({ port: PORT + 1, queryFn: fakeQuery, onShutdown: () => { stopped = true; } });
+  const o = (p: string, init: RequestInit = {}) =>
+    fetch(`http://127.0.0.1:${PORT + 1}${p}`, { ...init, headers: { "content-type": "application/json", "x-learn-token": other.token } });
+  expect((await fetch(`http://127.0.0.1:${PORT + 1}/api/shutdown`, { method: "POST" })).status).toBe(401);
+  expect((await o("/api/shutdown", { method: "GET" })).status).toBe(404);
+  const r = await o("/api/lessons", { method: "POST", body: JSON.stringify({ topic: "perm wait", cwd: process.cwd() }) });
+  const id = ((await r.json()) as any).id;
+  // "perm" makes the scripted turn wait on a permission prompt, so Claude is mid-turn: shutdown refuses unless forced.
+  const busy = await o("/api/shutdown", { method: "POST", body: "{}" });
+  expect(busy.status).toBe(409);
+  expect(((await busy.json()) as any).busy).toEqual([id]);
+  expect((await o("/api/shutdown", { method: "POST", body: JSON.stringify({ force: true }) })).status).toBe(200);
+  for (let i = 0; i < 20 && !stopped; i++) await Bun.sleep(50);
+  expect(stopped).toBe(true);
+  expect(await fetch(`http://127.0.0.1:${PORT + 1}/health`).then(() => "up", () => "down")).toBe("down");
+});

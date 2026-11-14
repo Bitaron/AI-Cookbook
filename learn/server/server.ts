@@ -8,12 +8,22 @@ import { timingSafeEqual } from "node:crypto";
 
 type WSData = { lessonId: string };
 
-export function startServer(opts: { port?: number; queryFn?: QueryFn } = {}) {
+/** Git commit of the code this server process loaded (null outside a git checkout). Lets `learn update` spot a stale server. */
+function codeCommit(): string | null {
+  const r = Bun.spawnSync(["git", "-C", ROOT, "rev-parse", "HEAD"], { stdout: "pipe", stderr: "ignore" });
+  return r.exitCode === 0 ? r.stdout.toString().trim() || null : null;
+}
+
+export function startServer(opts: { port?: number; queryFn?: QueryFn; onShutdown?: () => void } = {}) {
   ensureDirs();
   const port = opts.port ?? PORT;
   const token = getToken();
   const queryFn = opts.queryFn ?? realQuery;
   const sessions = new Map<string, LiveSession>();
+  const code = codeCommit();
+  const startedAt = Date.now();
+  const busyLessons = () => [...sessions.entries()].filter(([, s]) => s.busy).map(([id]) => id);
+  let stopping = false;
   const allowedHosts = new Set([`${HOST}:${port}`, `localhost:${port}`]);
   const allowedOrigins = new Set([`http://${HOST}:${port}`, `http://localhost:${port}`]);
 
@@ -92,6 +102,22 @@ export function startServer(opts: { port?: number; queryFn?: QueryFn } = {}) {
         if (!origin) return new Response("origin required", { status: 403 });
         if (!sessionFor(id)) return new Response("no such lesson", { status: 404 });
         return srv.upgrade(req, { data: { lessonId: id } }) ? undefined : new Response("upgrade failed", { status: 400 });
+      }
+
+      if (p === "/api/server" && req.method === "GET") {
+        return json({ version: VERSION, code, pid: process.pid, root: ROOT, startedAt, busy: busyLessons() });
+      }
+      // Graceful stop for `learn stop` / `learn update`: refuses while Claude is mid-turn unless forced.
+      if (p === "/api/shutdown" && req.method === "POST") {
+        const body = await req.json().catch(() => ({})) as any;
+        const busy = busyLessons();
+        if (busy.length && !body.force) return json({ error: "busy", busy }, 409);
+        if (!stopping) {
+          stopping = true;
+          for (const s of sessions.values()) { s.close(); saveLesson(s.lesson); }
+          setTimeout(() => { server.stop(true); (opts.onShutdown ?? (() => process.exit(0)))(); }, 50);
+        }
+        return json({ ok: true });
       }
 
       if (p === "/api/lessons" && req.method === "GET") return json(listLessons());
