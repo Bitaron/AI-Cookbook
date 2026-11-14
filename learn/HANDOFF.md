@@ -10,7 +10,7 @@ You run `/learn <topic>` in Claude Code, or `learn <topic>` in a terminal. A loc
 
 Claude teaches on a **lesson canvas**: a document of sections it edits with patches. Sections hold step-through animations (graph or sequence mode), Mermaid diagrams, code walkthroughs, formulas, quizzes, comparison tables, callouts, sandboxed demos, and a lesson-wide glossary.
 
-Every lesson autosaves to `~/.learn/lessons/<id>/` as `lesson.json` plus a self-contained offline `lesson.html` (about 100–130 KB), and can be continued live later.
+Every lesson autosaves to `~/.learn/lessons/<id>/` as `lesson.json` plus a self-contained offline `lesson.html`, and can be continued live later. The inlined runtime and CSS alone are about 128 KB, so a saved `lesson.html` is roughly 130–200 KB (the 8-section demo lesson is 199 KB).
 
 ## How it was built (decisions and why)
 
@@ -156,5 +156,5 @@ Rebuild (`bun run build`) after any change under `web/`. Saved lessons inline `w
 ## Where things are
 
 - **Code:** `learn/` in https://github.com/Bitaron/AI-Cookbook (merged from pull request #1). The original dev worktree was `explanation-harness/.claude/worktrees/learn-v1`, branch `worktree-learn-v1`.
-- **Demo lesson:** `~/.learn/lessons/2026-11-14-explain-ptp-boundary-clock-819c`.
+- **Demo lesson:** `~/.learn/lessons/2026-11-14-explain-ptp-boundary-clock-819c` (PTP boundary clock, Opus: 4 turns, 8 sections, 20 glossary terms).
 - **Not installed** on the dev machine. Run `./install.sh` from `learn/` to put `learn` on PATH and add `/learn` to Claude Code.
