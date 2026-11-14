@@ -89,12 +89,25 @@ export function renderBlock(b: Block, key: string, opts: RenderOpts = {}): strin
     }
     case "callout": {
       const kind = b.kind || "key";
-      const label = { key: "Key idea", pitfall: "Pitfall", analogy: "Analogy", tip: "Tip" }[kind];
+      const label = { key: "Key idea", pitfall: "Pitfall", analogy: "Analogy", tip: "Tip", project: "In your project" }[kind];
       return `<aside class="callout callout-${kind}"><div class="callout-label">${label}</div>${md(b.text, opts)}</aside>`;
+    }
+    case "formula": {
+      const eq = opts.math ? opts.math(b.tex, true) : `<pre class="code"><code>${esc(b.tex)}</code></pre>`;
+      const sym = (s: string) => (opts.math ? opts.math(s, false) : `<code>${esc(s)}</code>`);
+      const vars = (b.vars ?? []).filter(v => v.length >= 2).map(v =>
+        `<div class="fv"><span class="fv-sym">${sym(v[0]!)}</span><span class="fv-meaning">${md(v[1]!, opts)}</span>${v[2] ? `<span class="fv-unit">${esc(v[2])}</span>` : ""}</div>`).join("");
+      return `<figure class="b-formula"><div class="formula-eq">${eq}</div>${vars ? `<div class="formula-vars"><div class="fv-where">where</div>${vars}</div>` : ""}${b.caption ? `<figcaption>${md(b.caption, opts)}</figcaption>` : ""}</figure>`;
     }
     case "sandbox":
       return `<div class="b-sandbox w" data-w="sandbox" data-k="${key}"></div>`;
   }
+}
+
+/** Markup for one lesson section, shared by the live page and saved files. */
+export function sectionShell(id: string, title: string, bodyHtml: string): string {
+  return `<section class="sec" id="${esc(id)}" data-id="${esc(id)}"><div class="sec-gutter"><span class="sec-id">${esc(id)}</span></div>`
+    + `<div class="sec-main"><h2 class="sec-title">${esc(title)}</h2><div class="sec-body">${bodyHtml}</div></div></section>`;
 }
 
 export function renderSection(s: Section, opts: RenderOpts = {}): string {

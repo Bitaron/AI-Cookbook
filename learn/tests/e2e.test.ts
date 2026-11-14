@@ -82,6 +82,50 @@ test("code walkthrough and quiz", async () => {
   expect(await quiz.locator(".quiz-ask").count()).toBe(1);
 });
 
+test("glossary terms, formula and sequence animation", async () => {
+  expect(await page.locator("abbr.term").count()).toBeGreaterThanOrEqual(2);
+  await page.locator("abbr.term[data-term='PTP']").first().hover();
+  await page.waitForSelector(".term-card.is-in");
+  expect(await page.locator(".term-card").textContent()).toContain("Precision Time Protocol");
+  expect(await page.locator(".term-card .term-more").count()).toBe(1);
+  await page.mouse.move(5, 5);
+  expect(await page.locator(".outline-glossary li").count()).toBe(2);
+  expect(await page.locator(".b-formula math").count()).toBeGreaterThan(0);
+  expect(await page.locator(".b-formula .fv").count()).toBe(2);
+  expect(await page.locator(".callout-project").count()).toBe(1);
+  const seq = page.locator(".anim:has(.mode-seq)");
+  expect(await seq.locator(".seq-msg").count()).toBe(3);
+  expect(await seq.locator(".seq-msg.is-hidden").count()).toBe(2);
+  await seq.locator('[data-act="next"]').click();
+  expect(await seq.locator(".seq-msg.is-hidden").count()).toBe(1);
+  expect(await seq.locator(".seq-msg.is-active").count()).toBe(1);
+});
+
+test("theme switch keeps diagrams and animation state", async () => {
+  await page.evaluate(() => document.querySelector(".mermaid-svg svg")!.setAttribute("data-mark", "1"));
+  const cap = await page.locator(".anim .anim-caption").first().textContent();
+  await page.locator("body").click({ position: { x: 5, y: 300 } });
+  await page.keyboard.press("t");
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
+  await Bun.sleep(800);
+  expect(await page.locator(".mermaid-svg svg[data-mark='1']").count()).toBe(1); // not re-rendered
+  expect(await page.locator(".anim .anim-caption").first().textContent()).toBe(cap);
+  await page.keyboard.press("t");
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+});
+
+test("keyboard shortcuts", async () => {
+  await page.keyboard.press("?");
+  await page.waitForSelector(".modal.keys");
+  expect(await page.locator(".modal.keys dt").count()).toBeGreaterThan(10);
+  await page.keyboard.press("Escape");
+  expect(await page.locator(".modal.keys").count()).toBe(0);
+  await page.keyboard.press("/");
+  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("TEXTAREA");
+  await page.keyboard.press("Escape");
+  expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe("TEXTAREA");
+});
+
 test("section quick action, then undo", async () => {
   await page.locator(".sec[data-id='s1']").hover();
   await page.locator(".sec[data-id='s1'] .sec-tools [data-q='simpler']").click();
@@ -109,7 +153,36 @@ test("sandbox can message Claude after confirmation", async () => {
   expect(await page.locator(".modal pre").textContent()).toBe("sandbox says hi");
   await page.locator(".modal [data-v='1']").click();
   await page.waitForFunction(() => document.querySelector(".chat-log")?.textContent?.includes("sandbox says hi"));
-  await page.waitForSelector(".sec-name:text('Follow-up 4')");
+  await page.waitForSelector(".sec-title:text('Follow-up 4')");
+});
+
+test("right-click quotes text and an animation frame into the next message", async () => {
+  await page.waitForSelector(".stop-btn[hidden]", { state: "attached" });
+  // Select the first paragraph of s1, then right-click inside it.
+  await page.locator(".sec[data-id='s1'] .b-md p").scrollIntoViewIfNeeded();
+  await Bun.sleep(400);
+  await page.evaluate(() => {
+    const p = document.querySelector(".sec[data-id='s1'] .b-md p")!;
+    const r = document.createRange(); r.selectNodeContents(p);
+    const sel = getSelection()!; sel.removeAllRanges(); sel.addRange(r);
+  });
+  const box = (await page.locator(".sec[data-id='s1'] .b-md p").boundingBox())!;
+  await page.mouse.click(box.x + 40, box.y + 10, { button: "right" });
+  await page.waitForSelector(".ctx-menu.is-in");
+  await page.locator(".ctx-menu button:has-text('Ask about this')").first().click();
+  await page.waitForSelector(".chip-quote");
+  await page.locator(".anim").first().scrollIntoViewIfNeeded();
+  await Bun.sleep(400);
+  const anim = (await page.locator(".anim").first().boundingBox())!;
+  await page.mouse.click(anim.x + 60, anim.y + 60, { button: "right" });
+  await page.waitForSelector(".ctx-menu.is-in");
+  await page.locator(".ctx-menu button:has-text('Ask with a picture of this step')").click();
+  await page.waitForSelector(".chip-anim img");
+  await page.locator(".composer textarea").fill("why one thread?");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => [...document.querySelectorAll(".msg-user blockquote")].some(b => b.textContent?.includes("one thread")));
+  expect(await page.locator(".chip").count()).toBe(0);
+  await page.waitForSelector(".stop-btn[hidden]", { state: "attached" });
 });
 
 test("transcript tab shows raw log", async () => {
@@ -132,7 +205,9 @@ test("saved lesson.html works offline", async () => {
   off.on("pageerror", e => offErrors.push(String(e)));
   await off.goto(`file://${file}`);
   await off.waitForSelector(".anim svg");
-  expect(await off.locator(".sec").count()).toBe(4);
+  expect(await off.locator(".sec").count()).toBe(5);
+  expect(await off.locator("abbr.term").count()).toBeGreaterThan(0);
+  expect(await off.locator(".mode-seq .seq-msg").count()).toBe(3);
   await off.locator('.quiz-opt[data-i="1"]').first().click();
   expect(await off.locator(".quiz-feedback").first().textContent()).toContain("Correct");
   expect(await off.locator(".quiz-ask").count()).toBe(0); // no Claude offline

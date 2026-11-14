@@ -26,15 +26,49 @@ learn stop                           # stop the background server
 Inside Claude Code, `/learn <topic>` writes a short summary of what you're working on and passes it to the tutor. The lesson then starts from your real context.
 
 ### In the browser
-- **Canvas** (centre): Claude adds, edits and reorders sections. Hover a section for *Simpler*, *Deeper*, *Example*, *Quiz me* and *Ask…*.
+- **Canvas** (centre): Claude adds, edits and reorders sections. Hover a section for *Simpler*, *Deeper*, *Example* and *Ask…*.
+- **What Claude can draw:**
+  - step-through animations: boxes and arrows (graph mode), or lifelines with timed messages for protocols (sequence mode);
+  - Mermaid diagrams, which follow the light/dark theme;
+  - code walkthroughs, formulas with a legend for each variable, comparison tables;
+  - callouts, including *In your project*;
+  - quizzes;
+  - sandboxed what-if demos.
+- **Glossary:** every acronym Claude defines is underlined wherever it appears. Hover it for the definition and an *Explain* button. The full list is under the outline.
+- **Right-click** anything in the lesson. Shift+right-click gives the browser's own menu.
+  - **Selected text:** *Ask about this* quotes it into your next message. *Explain this simply* and *Define the terms in this* send right away.
+  - **An animation:** ask about the current step, optionally with a picture of that frame attached.
+  - **A diagram:** ask about it, by its source or as a picture.
+  - **Code or an image:** quote it into your next message.
+  - **A section:** simpler, deeper, example, quiz.
 - **Chat** (right):
-  - Claude's replies are kept short, and tool calls show as small chips.
-  - Shortcuts: *Analogy*, *Quiz me*, *Example*, *Go deeper*, *Wrap up*.
+  - Claude's replies are kept short; tool calls show as small chips, and a status line shows what Claude is doing.
+  - Quoted context appears as chips above the message box. Backspace on an empty box removes the last chip.
+  - Shortcuts: *Analogy*, *Example*, *Go deeper*, *Quiz me*, *Wrap up*.
   - Type `@` to mention a file. Paste or drop images (they're downscaled to 1024px before sending).
   - **Stop** interrupts Claude. **Undo** reverts Claude's last canvas change.
+- **Save or share** (top bar): download the offline copy, print or save as PDF (the lesson only), or ask Claude for a one-page summary or a short post to share.
 - **Transcript** tab: the full raw log, including every tool call and result.
-- **Permissions:** your Claude Code settings (`settings.json` allow and deny rules) apply as usual. Anything else shows an approval dialog in the page.
+- **Permissions:** your Claude Code settings (`settings.json` allow and deny rules) apply as usual. Anything else shows an approval dialog in the page (<kbd>Y</kbd> allow once, <kbd>A</kbd> allow for the session, <kbd>N</kbd> deny).
 - **Meter:** the context size, output tokens, cache hit rate and cost of the last turn.
+- **Light/dark:** <kbd>T</kbd> or the top-right button. The new theme spreads out in a circle from the button; diagrams and running animations keep their state.
+
+### Keyboard shortcuts
+
+Press <kbd>?</kbd> in the page for this list.
+
+| Key | Action |
+|---|---|
+| <kbd>/</kbd> | Focus the message box (<kbd>Enter</kbd> sends, <kbd>Shift</kbd>+<kbd>Enter</kbd> adds a new line, <kbd>Esc</kbd> leaves it) |
+| <kbd>J</kbd> / <kbd>K</kbd> | Next / previous section |
+| <kbd>S</kbd> <kbd>D</kbd> <kbd>E</kbd> <kbd>A</kbd> | Simpler / Deeper / Example / Ask, for the section in view |
+| <kbd>Q</kbd> | Quote the selected text into the next message |
+| <kbd>←</kbd> <kbd>→</kbd> <kbd>Space</kbd> <kbd>Home</kbd> <kbd>End</kbd> | Step, play and pause the focused animation |
+| <kbd>U</kbd> | Undo Claude's last canvas change |
+| <kbd>Esc</kbd> <kbd>Esc</kbd> | Stop Claude |
+| <kbd>T</kbd> | Switch light / dark |
+| <kbd>G</kbd> | Switch between the lesson and transcript tabs |
+| <kbd>L</kbd> | Open the library |
 
 ### Saved lessons
 Lessons live in `~/.learn/lessons/<id>/`:
@@ -58,15 +92,26 @@ learn CLI / skill ──POST──▶ Bun server (127.0.0.1:4747, token) ──A
 ```
 
 - **One tool.** Claude edits the canvas through a single tool, `mcp__learn__canvas`, which makes patch operations (add, update, append, delete, move). Its results are tiny (`ok +s3 · outline: …`), so tool output doesn't fill the context.
-- **Compact animation format.** Claude writes only the meaning of an animation. Layout, styling and timing are computed by the player:
+- **Compact animation format.** Claude writes only the meaning of an animation. Layout, curved edges, styling and timing are computed by the player. In graph mode, a wide chain is stacked top to bottom automatically.
   ```
   A = Call stack
   B = Web APIs (round)
   !C = Task queue (db)
   A -> B "setTimeout"
+  group R "Runtime": A B
   > Timer fires
   show C
   pkt B->C "cb"
+  ```
+  Sequence mode for protocols:
+  ```
+  mode seq
+  M = Grandmaster
+  S = Boundary clock (hex)
+  > Sync, stamped t1
+  msg M->S "Sync"
+  note M "t1"
+  note S "t2"
   ```
 - **Token efficiency.**
   - Chat replies are short and the canvas holds the content.

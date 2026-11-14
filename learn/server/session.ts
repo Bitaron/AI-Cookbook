@@ -9,6 +9,7 @@ import { saveLesson } from "./store";
 import { SCRATCH_DIR } from "./config";
 import type { Lesson, ChatMsg } from "../web/runtime/types";
 
+export interface CanvasArgs { ops?: CanvasOp[]; lesson_title?: string; glossary?: Record<string, string> }
 export type ResumeMode = "auto" | "full" | "outline";
 export interface ImageInput { mediaType: string; data: string }
 export interface Client { send(data: string): void }
@@ -16,7 +17,7 @@ export interface Client { send(data: string): void }
 /** Minimal surface of the SDK Query we use (lets tests substitute a fake agent). */
 export interface AgentHandle extends AsyncIterable<any> { interrupt(): Promise<unknown> }
 export interface AgentCtx {
-  canvas: (args: { ops: CanvasOp[]; lesson_title?: string }) => Promise<string>;
+  canvas: (args: CanvasArgs) => Promise<string>;
   canUseTool: CanUseTool;
 }
 export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Record<string, any> }, ctx: AgentCtx) => AgentHandle;
@@ -56,7 +57,8 @@ function summarizeInput(name: string, input: any): string {
   if (!input || typeof input !== "object") return "";
   if (name === CANVAS_TOOL) {
     const ops = (input.ops ?? []) as CanvasOp[];
-    return ops.map(o => `${o.op}${o.id ? ` ${o.id}` : ""}${o.title ? ` "${o.title}"` : ""}`).join(", ");
+    const g = input.glossary ? Object.keys(input.glossary) : [];
+    return [...ops.map(o => `${o.op}${o.id ? ` ${o.id}` : ""}${o.title ? ` "${o.title}"` : ""}`), ...(g.length ? [`glossary ${g.slice(0, 6).join(", ")}${g.length > 6 ? "…" : ""}`] : [])].join(", ");
   }
   const v = input.command ?? input.file_path ?? input.pattern ?? input.url ?? input.query ?? input.description ?? input.path;
   return typeof v === "string" ? clip(v, 160) : clip(JSON.stringify(input), 160);
@@ -103,15 +105,22 @@ export class LiveSession {
   }
 
   // ---- canvas tool ----------------------------------------------------------
-  private canvas = async (args: { ops: CanvasOp[]; lesson_title?: string }) => {
-    const r = applyOps(this.lesson.sections, args.ops);
+  private canvas = async (args: CanvasArgs) => {
+    const r = applyOps(this.lesson.sections, args.ops ?? []);
+    let gloss = "";
+    if (args.glossary && typeof args.glossary === "object") {
+      const entries = Object.entries(args.glossary).filter(([k, v]) => k.trim() && typeof v === "string").slice(0, 80);
+      this.lesson.glossary = { ...(this.lesson.glossary ?? {}) };
+      for (const [k, v] of entries) this.lesson.glossary[k.trim().slice(0, 40)] = v.slice(0, 300);
+      gloss = ` · glossary ${Object.keys(this.lesson.glossary).length} terms`;
+    }
     this.lesson.sections = r.sections;
     if (args.lesson_title) this.lesson.title = args.lesson_title.slice(0, 120);
     // Drop pre-rendered HTML for sections that changed; the live page re-posts it.
-    for (const op of args.ops) if (op.id) delete this.lesson.rendered[op.id];
-    this.broadcast({ type: "canvas", sections: this.lesson.sections, title: this.lesson.title });
+    for (const op of args.ops ?? []) if (op.id) delete this.lesson.rendered[op.id];
+    this.broadcast({ type: "canvas", sections: this.lesson.sections, title: this.lesson.title, glossary: this.lesson.glossary });
     saveLesson(this.lesson, { html: false });
-    return r.summary;
+    return r.summary + gloss;
   };
 
   // ---- permissions ----------------------------------------------------------

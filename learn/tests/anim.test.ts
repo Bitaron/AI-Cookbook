@@ -1,6 +1,28 @@
 import { test, expect } from "bun:test";
-import { parseScene, frameAt } from "../web/runtime/anim-dsl";
+import { parseScene, frameAt, seqTimeline, wrapLabel } from "../web/runtime/anim-dsl";
 import { layoutScene } from "../web/runtime/layout";
+
+test("seq mode: messages get rows, notes sit beside them", () => {
+  const s = parseScene(`mode seq\nM = Master\nS = Slave\n> sync\nmsg M->S "Sync"\nnote M "t1"\n> reply\npkt S->M "Delay_Req"\nnote S "t3"`);
+  expect(s.mode).toBe("seq");
+  const tl = seqTimeline(s);
+  expect(tl.messages.map(m => [m.label, m.row, m.step])).toEqual([["Sync", 0, 0], ["Delay_Req", 1, 1]]);
+  expect(tl.notes.map(n => [n.text, n.row])).toEqual([["t1", 0], ["t3", 1]]);
+});
+
+test("groups and new shapes parse", () => {
+  const s = parseScene(`A = Grandmaster (person)\nB = Decide (diamond)\nC = Router (hex)\ngroup G "Core": A B\n!group H "Edge": C`);
+  expect(s.errors).toEqual([]);
+  expect(s.nodes.map(n => n.shape)).toEqual(["person", "diamond", "hex"]);
+  expect(s.groups).toEqual([{ id: "G", label: "Core", members: ["A", "B"], hidden: false }, { id: "H", label: "Edge", members: ["C"], hidden: true }]);
+  expect(frameAt(s, 0).visible.has("G")).toBe(true);
+  expect(frameAt(s, 0).visible.has("H")).toBe(false);
+});
+
+test("labels wrap into at most two balanced lines", () => {
+  expect(wrapLabel("Short")).toEqual(["Short"]);
+  expect(wrapLabel("Telecom boundary clock router")).toEqual(["Telecom boundary", "clock router"]);
+});
 
 const SRC = `
 dir LR

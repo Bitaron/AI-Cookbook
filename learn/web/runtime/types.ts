@@ -7,7 +7,8 @@ export type Block =
   | { t: "code"; lang?: string; code: string; steps?: string }
   | { t: "quiz"; q: string; options?: string[]; answer?: number; why?: string }
   | { t: "compare"; cols: string[]; rows: string[][] }
-  | { t: "callout"; kind?: "key" | "pitfall" | "analogy" | "tip"; text: string }
+  | { t: "callout"; kind?: "key" | "pitfall" | "analogy" | "tip" | "project"; text: string }
+  | { t: "formula"; tex: string; vars?: string[][]; caption?: string }
   | { t: "sandbox"; html: string; height?: number };
 
 export interface Section { id: string; title: string; blocks: Block[] }
@@ -49,6 +50,8 @@ export interface Lesson {
   /** Pre-rendered static HTML per section id (mermaid → SVG, math, highlighting), posted by the live page. */
   rendered: Record<string, string>;
   usage: Usage;
+  /** Lesson-wide glossary: term → one-line definition. Terms are underlined wherever they appear. */
+  glossary?: Record<string, string>;
 }
 
 export const emptyUsage = (): Usage => ({ costUsd: 0, contextTokens: 0, outputTokens: 0, cacheHitPct: 0, totalOutputTokens: 0, turns: 0 });

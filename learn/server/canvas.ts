@@ -10,7 +10,8 @@ export const blockSchema = z.discriminatedUnion("t", [
   z.object({ t: z.literal("code"), lang: z.string().optional(), code: z.string(), steps: z.string().optional() }),
   z.object({ t: z.literal("quiz"), q: z.string(), options: z.array(z.string()).optional(), answer: z.number().int().optional(), why: z.string().optional() }),
   z.object({ t: z.literal("compare"), cols: z.array(z.string()), rows: z.array(z.array(z.string())) }),
-  z.object({ t: z.literal("callout"), kind: z.enum(["key", "pitfall", "analogy", "tip"]).optional(), text: z.string() }),
+  z.object({ t: z.literal("callout"), kind: z.enum(["key", "pitfall", "analogy", "tip", "project"]).optional(), text: z.string() }),
+  z.object({ t: z.literal("formula"), tex: z.string(), vars: z.array(z.array(z.string())).optional(), caption: z.string().optional() }),
   z.object({ t: z.literal("sandbox"), html: z.string().max(60000), height: z.number().optional() }),
 ]);
 
@@ -23,25 +24,31 @@ export const opSchema = z.object({
 });
 
 export const canvasShape = {
-  ops: z.array(opSchema).min(1),
+  ops: z.array(opSchema).optional(),
   lesson_title: z.string().optional(),
+  glossary: z.record(z.string(), z.string()).optional(),
 };
 
 export type CanvasOp = z.infer<typeof opSchema>;
 
 export const CANVAS_DESCRIPTION = `Edit the lesson canvas (the main teaching surface). Patch, never rewrite.
 ops: add{title,blocks,after?:id|"^"} (new id returned) | update{id,title?,blocks?} (replaces given fields) | append{id,blocks} | delete{id} | move{id,after:id|"^"}.
+glossary{TERM:"expansion: one-line definition"} merges lesson-wide; terms get hover cards everywhere. Define every acronym once.
 Blocks (t=):
 md{text} markdown; $tex$ / $$tex$$ math; \`\`\`mermaid fences ok
-diagram{mermaid,caption?}
+diagram{mermaid,caption?} flowchart/sequence/state etc.
 anim{scene,caption?} step-through animation, compact DSL, one item per line:
-  dir LR|TB · node: A = Label [(round|circle|db|note)] [@col,row] · edge: A -> B ["label"] (-- undirected) · prefix ! = hidden at start
-  "> caption" starts a step, then actions: hl A B | dim A | pulse A | pkt A->B ["label"] | note A "text" (these last one step) | show A | hide A | label A "text" | edge A->B | unedge A->B (these persist)
+  mode graph|seq (seq = lifelines; each pkt becomes a timed message row, notes stay: ideal for protocols) · dir LR|TB
+  node: A = Label, optional shape suffix (round) (circle) (db) (note) (diamond) (hex) (person), optional pin @col,row · edge: A -> B "label" (label optional; -- undirected) · group G "Label": A B · prefix ! = hidden at start
+  "> caption" starts a step, then actions: hl A B | dim A | pulse A | pkt A->B "label" | note A "short" | show A | hide A | label A "text" | edge A->B | unedge A->B
+  (graph mode: hl/dim/pulse/pkt/note last one step, the rest persist). Keep labels and notes short; ≤5 nodes per row reads best.
+Section titles: plain words, no numbering (ids already number them).
 code{lang,code,steps?} steps: lines "3-5: plain-language note"
+formula{tex,vars?:[[sym,meaning,unit?]],caption?}
 quiz{q,options?,answer?(0-based),why?} options → auto-graded MC; no options → free answer graded by you
 compare{cols,rows}
-callout{kind:key|pitfall|analogy|tip,text}
-sandbox{html,height?} last resort: self-contained HTML/JS (no network); call learn.send(text) to message you.`;
+callout{kind:key|pitfall|analogy|tip|project,text} project = why it matters for the user's own work
+sandbox{html,height?} last resort for what-if sliders/toggles: self-contained HTML/JS, no network; use CSS vars --ink --muted --amber --mint --panel; learn.send(text) messages you.`;
 
 export interface ApplyResult { sections: Section[]; title?: string; summary: string; errors: string[] }
 
@@ -62,7 +69,7 @@ function insertAfter(list: Section[], sec: Section, after?: string): string | nu
   return null;
 }
 
-export function applyOps(current: Section[], ops: CanvasOp[]): ApplyResult {
+export function applyOps(current: Section[], ops: CanvasOp[] = []): ApplyResult {
   const sections = current.map(s => ({ ...s, blocks: [...s.blocks] }));
   const errors: string[] = [];
   const touched: string[] = [];

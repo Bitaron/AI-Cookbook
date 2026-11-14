@@ -4,16 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>learn</title>
+<script>try{var t=localStorage.getItem("learn-theme");if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
 <link rel="stylesheet" href="/assets/styles.css">
 <script type="module" src="/assets/app.js"></script>
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><a href="/" title="Library">learn</a></div>
+  <div class="brand"><a href="/" title="Library (L)"><span class="brand-mark" aria-hidden="true"></span>learn</a></div>
   <h1 class="lesson-title" title="Click to rename"></h1>
   <div class="meta"></div>
   <nav class="tabs" hidden><button data-tab="lesson" class="is-on">Lesson</button><button data-tab="transcript">Transcript</button></nav>
-  <button class="theme-toggle" title="Switch light or dark theme" aria-label="Switch theme"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5a6.5 6.5 0 0 1 0 13z" fill="currentColor"/></svg></button>
+  <div class="top-actions" hidden>
+    <button class="icon-btn export-btn" title="Save or share this lesson" aria-label="Save or share" aria-haspopup="menu">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M3 12.5h10"/></svg>
+    </button>
+    <button class="icon-btn keys-btn" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M4 7h1M7 7h2M11 7h1M5 9.5h6"/></svg>
+    </button>
+  </div>
+  <button class="icon-btn theme-toggle" title="Switch light or dark theme (T)" aria-label="Switch theme">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path class="fill" d="M8 2a6 6 0 0 1 0 12z"/></svg>
+  </button>
 </header>
 <div class="live-banner" hidden></div>
 
@@ -29,21 +40,23 @@
     <div class="chat-log"></div>
     <div class="composer">
       <div class="mentions" hidden></div>
+      <div class="status-line" hidden><span class="status-dot"></span><span class="status-text"></span><span class="status-time"></span></div>
       <div class="shortcuts">
         <button data-say="Give me an analogy for the current idea.">Analogy</button>
-        <button data-say="Quiz me on what we've covered so far.">Quiz me</button>
         <button data-say="Show a concrete example.">Example</button>
         <button data-say="Go one level deeper.">Go deeper</button>
+        <button data-say="Quiz me on what we've covered so far.">Quiz me</button>
         <button data-say="Wrap up: add a short recap section with the key takeaways.">Wrap up</button>
       </div>
       <div class="input-wrap">
-        <div class="attachments"></div>
-        <textarea rows="2" placeholder="Ask anything. @ mentions a file, and you can paste images." aria-label="Message"></textarea>
+        <div class="ctx-chips"></div>
+        <textarea rows="2" placeholder="Ask anything. Right-click the lesson to quote it; @ mentions a file." aria-label="Message"></textarea>
         <div class="input-row">
-          <button class="undo-btn" title="Undo Claude's last canvas change" disabled>Undo</button>
+          <button class="undo-btn" title="Undo Claude's last canvas change (U)" disabled>Undo</button>
+          <span class="hint">Press <kbd>?</kbd> for shortcuts</span>
           <span class="spacer"></span>
-          <button class="stop-btn" hidden>Stop</button>
-          <button class="send-btn" disabled>Send</button>
+          <button class="stop-btn" title="Stop Claude (Esc Esc)" hidden>Stop</button>
+          <button class="send-btn" title="Send (Enter)" disabled>Send</button>
         </div>
       </div>
       <div class="meter"></div>
@@ -51,6 +64,8 @@
   </aside>
   <section class="transcript" hidden></section>
 </main>
+<div class="menu-root"></div>
 <div class="modal-root"></div>
+<div class="toast-root" aria-live="polite"></div>
 </body>
 </html>

@@ -87,11 +87,19 @@ function hydrateQuiz(el: HTMLElement, b: Extract<Block, { t: "quiz" }>, hooks: H
 }
 
 const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:";
-const SANDBOX_BRIDGE = `<script>(function(){var t=null;function h(){var b=document.documentElement;parent.postMessage({type:"learn:height",h:Math.max(b.scrollHeight,document.body?document.body.scrollHeight:0)},"*")}window.learn={send:function(text){parent.postMessage({type:"learn:send",text:String(text).slice(0,2000)},"*")}};addEventListener("load",h);new ResizeObserver(function(){clearTimeout(t);t=setTimeout(h,50)}).observe(document.documentElement)})()<\/script>`;
+const SANDBOX_BRIDGE = `<script>(function(){var t=null;function h(){var b=document.documentElement;parent.postMessage({type:"learn:height",h:Math.max(b.scrollHeight,document.body?document.body.scrollHeight:0)},"*")}window.learn={send:function(text){parent.postMessage({type:"learn:send",text:String(text).slice(0,2000)},"*")}};addEventListener("load",h);addEventListener("message",function(e){if(e.source===parent&&e.data&&e.data.type==="learn:theme")document.documentElement.dataset.theme=e.data.dark?"dark":"light"});new ResizeObserver(function(){clearTimeout(t);t=setTimeout(h,50)}).observe(document.documentElement)})()<\/script>`;
+
+const SANDBOX_THEME = `<style>
+:root{color-scheme:dark;--ink:#ece7dc;--muted:#9aa0b2;--amber:#f4b740;--mint:#5fd4c0;--rose:#f07a6e;--panel:#1a1d29;--bg:#13151d;--rule:#2b2f40}
+:root[data-theme=light]{color-scheme:light;--ink:#1c2030;--muted:#5f6577;--amber:#b0600b;--mint:#0f7d6d;--rose:#c0402f;--panel:#ffffff;--bg:#f5f4ef;--rule:#dcdcd2}
+body{margin:0;padding:14px;font:14px/1.55 Inter,"Segoe UI",system-ui,sans-serif;background:transparent;color:var(--ink);transition:color .4s}
+button,input,select{font:inherit;color:inherit}
+button{background:var(--panel);border:1px solid var(--rule);border-radius:8px;padding:6px 12px;cursor:pointer}
+input[type=range]{accent-color:var(--amber)}
+</style>`;
 
 function sandboxDoc(html: string, dark: boolean): string {
-  const base = `<style>:root{color-scheme:${dark ? "dark" : "light"}}body{margin:0;padding:12px;font:14px/1.5 system-ui,sans-serif;background:transparent;color:${dark ? "#e6e1d6" : "#1d1b17"}}</style>`;
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${SANDBOX_CSP}">${base}${SANDBOX_BRIDGE}</head><body>${html}</body></html>`;
+  return `<!doctype html><html data-theme="${dark ? "dark" : "light"}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${SANDBOX_CSP}">${SANDBOX_THEME}${SANDBOX_BRIDGE}</head><body>${html}</body></html>`;
 }
 
 const sandboxFrames = new Map<Window, HTMLIFrameElement>();

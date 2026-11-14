@@ -5,6 +5,7 @@ const SCENE = `A = Call stack
 B = Web APIs (round)
 !C = Task queue (db)
 A -> B "setTimeout"
+group R "Runtime": A B
 !B -> C
 > Script calls setTimeout
 hl A
@@ -16,6 +17,20 @@ pkt B->C "cb"
 > Event loop moves it back
 pulse C
 pkt C->A "cb"`;
+
+const SEQ = `mode seq
+M = Grandmaster
+S = Boundary clock (hex)
+> Master sends Sync and stamps t1
+msg M->S "Sync"
+note M "t1"
+note S "t2"
+> Slave asks back with Delay_Req
+msg S->M "Delay_Req"
+note S "t3"
+note M "t4"
+> Master replies with t4
+msg M->S "Delay_Resp"`;
 
 export const fakeQuery: QueryFn = ({ prompt }, ctx) => {
   let interrupted = false;
@@ -35,7 +50,7 @@ export const fakeQuery: QueryFn = ({ prompt }, ctx) => {
         const ops = [{
           op: "add" as const, title: "The event loop in one picture",
           blocks: [
-            { t: "md" as const, text: "JavaScript runs on **one thread**. Inline math: $O(1)$." },
+            { t: "md" as const, text: "JavaScript runs on **one thread** and hands slow work to Web APIs. PTP is unrelated but has a glossary entry. Inline math: $O(1)$." },
             { t: "anim" as const, scene: SCENE, caption: "Step through it" },
             { t: "callout" as const, kind: "analogy" as const, text: "A single chef with a ticket rail." },
           ],
@@ -44,6 +59,9 @@ export const fakeQuery: QueryFn = ({ prompt }, ctx) => {
           blocks: [
             { t: "code" as const, lang: "js", code: "console.log('a');\nsetTimeout(() => {\n  console.log('b');\n}, 0);\nconsole.log('c');", steps: "1: Runs right away\n2-4: Schedules a callback\n5: Runs before the callback" },
             { t: "diagram" as const, mermaid: "flowchart LR\n  S[Stack] --> W[Web APIs] --> Q[Queue] --> S" },
+            { t: "anim" as const, scene: SEQ, caption: "Two-way time transfer" },
+            { t: "formula" as const, tex: "\\text{offset} = \\frac{(t_2 - t_1) - (t_4 - t_3)}{2}", vars: [["t_1", "Sync sent", "ns"], ["t_2", "Sync received", "ns"]] },
+            { t: "callout" as const, kind: "project" as const, text: "Your PTP router needs hardware timestamps." },
           ],
         }, {
           op: "add" as const, title: "Check yourself",
@@ -53,8 +71,8 @@ export const fakeQuery: QueryFn = ({ prompt }, ctx) => {
             { t: "sandbox" as const, html: "<button id=b>Ask Claude</button><script>b.onclick=()=>learn.send('sandbox says hi')</script>", height: 80 },
           ],
         }];
-        yield { type: "assistant", parent_tool_use_id: null, message: { usage, content: [{ type: "tool_use", id: "c1", name: "mcp__learn__canvas", input: { ops, lesson_title: "The JavaScript event loop" } }] } };
-        const summary = await ctx.canvas({ ops, lesson_title: "The JavaScript event loop" });
+        yield { type: "assistant", parent_tool_use_id: null, message: { usage, content: [{ type: "tool_use", id: "c1", name: "mcp__learn__canvas", input: { ops, lesson_title: "The JavaScript event loop", glossary: { PTP: "…" } } }] } };
+        const summary = await ctx.canvas({ ops, lesson_title: "The JavaScript event loop", glossary: { PTP: "Precision Time Protocol: syncs clocks over a network.", "Web APIs": "Browser features that run outside the JS thread." } });
         yield { type: "user", parent_tool_use_id: null, message: { content: [{ type: "tool_result", tool_use_id: "c1", content: summary }] } };
         yield { type: "assistant", parent_tool_use_id: null, message: { usage, content: [{ type: "text", text: "Added s1–s3: the event loop, a walkthrough and a quiz." }] } };
       } else {
