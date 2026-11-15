@@ -73,7 +73,7 @@ Press <kbd>?</kbd> in the page for this list.
 ### Saved lessons
 Lessons live in `~/.learn/lessons/<id>/`:
 - `lesson.json` is the source of truth.
-- `lesson.html` is a self-contained offline copy, around 100 KB. Diagrams are pre-rendered, and animations, quizzes and code walkthroughs still work without a server.
+- `lesson.html` is a self-contained offline copy, usually 130–200 KB. Diagrams are pre-rendered, and animations, quizzes and code walkthroughs still work without a server.
 
 `~/.learn/index.html` is an offline library page. When the server is running, saved pages offer **Continue this lesson live**. When it isn't, they show the `learn --resume` command to run.
 
