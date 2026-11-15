@@ -1,6 +1,6 @@
 // End-to-end: real server + real browser, scripted fake agent (no tokens spent).
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Browser, type Page } from "playwright";
@@ -308,6 +308,22 @@ test("saved lesson.html works offline", async () => {
   expect(await off.locator(".tx").count()).toBeGreaterThan(3);
   expect(offErrors).toEqual([]);
   await off.close();
+});
+
+test("saved pages from an older version are rebuilt with the current page code", async () => {
+  const { refreshSavedLessons } = await import("../server/store");
+  const { buildId } = await import("../server/export");
+  const file = join(LESSONS_DIR, lessonId, "lesson.html");
+  const updatedBefore = JSON.parse(readFileSync(join(LESSONS_DIR, lessonId, "lesson.json"), "utf8")).updatedAt;
+  const old = readFileSync(file, "utf8").replace(/<meta name="learn-build" content="[^"]*">/, '<meta name="learn-build" content="old">');
+  writeFileSync(file, old);
+  const served = await (await api(`/saved/${lessonId}/lesson.html`)).text(); // rebuilt on demand
+  expect(served).toContain(`content="${buildId()}"`);
+  writeFileSync(file, old.replace(/<meta name="learn-build"[^>]*>/, "")); // a page from before stamps existed
+  expect(refreshSavedLessons()).toBe(1); // what the server runs at startup, e.g. after `learn update`
+  expect(readFileSync(file, "utf8")).toContain(`content="${buildId()}"`);
+  expect(refreshSavedLessons()).toBe(0);
+  expect(JSON.parse(readFileSync(join(LESSONS_DIR, lessonId, "lesson.json"), "utf8")).updatedAt).toBe(updatedBefore);
 });
 
 test("library lists the lesson, static index too", async () => {

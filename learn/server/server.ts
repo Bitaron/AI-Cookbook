@@ -2,7 +2,7 @@
 import { join, resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { HOST, PORT, VERSION, DIST, ROOT, getToken, ensureDirs } from "./config";
-import { createLesson, getLesson, listLessons, deleteLesson, saveLesson, lessonDir, writeIndex } from "./store";
+import { createLesson, getLesson, listLessons, deleteLesson, saveLesson, lessonDir, writeIndex, refreshSavedLesson, refreshSavedLessons } from "./store";
 import { LiveSession, realQuery, type QueryFn, type ResumeMode } from "./session";
 import { timingSafeEqual } from "node:crypto";
 import { getCaps, topModel } from "./caps";
@@ -158,6 +158,7 @@ export function startServer(opts: { port?: number; queryFn?: QueryFn; onShutdown
       }
       const saved = /^\/saved\/([a-z0-9-]+)\/lesson\.html$/.exec(p);
       if (saved) {
+        try { refreshSavedLesson(saved[1]!); } catch { /* serve what's there */ }
         const f = join(lessonDir(saved[1]!), "lesson.html");
         return existsSync(f) ? new Response(Bun.file(f), { headers: { "content-type": "text/html; charset=utf-8", ...SEC_HEADERS } }) : new Response("not found", { status: 404 });
       }
@@ -206,6 +207,13 @@ export function startServer(opts: { port?: number; queryFn?: QueryFn; onShutdown
     },
   });
   writeIndex();
+  // Saved pages embed the page code they were written with; after an update, rebuild the stale ones.
+  setTimeout(() => {
+    try {
+      const n = refreshSavedLessons();
+      if (n) console.log(`learn: refreshed ${n} saved lesson page${n > 1 ? "s" : ""} to the current version`);
+    } catch (e) { console.error("learn: couldn't refresh saved lessons:", e); }
+  }, 0);
   return { server, token, sessions, port };
 }
 
