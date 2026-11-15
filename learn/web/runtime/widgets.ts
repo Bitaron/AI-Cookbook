@@ -1,5 +1,6 @@
 // Hydrates interactive placeholders (anim, code, quiz, sandbox). Shared by the live app and saved lessons.
 import { mountAnimation } from "./anim";
+import { enhanceZoom } from "./zoom";
 import { esc } from "./render";
 import type { Block, Section } from "./types";
 
@@ -146,4 +147,5 @@ export function hydrate(root: HTMLElement, sections: Section[], hooks: Hooks, in
       el.innerHTML = `<div class="widget-error">Widget failed: ${esc(String(e))}</div>`;
     }
   });
+  enhanceZoom(root);
 }

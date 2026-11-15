@@ -5,6 +5,7 @@ import { HOST, PORT, VERSION, DIST, ROOT, getToken, ensureDirs } from "./config"
 import { createLesson, getLesson, listLessons, deleteLesson, saveLesson, lessonDir, writeIndex } from "./store";
 import { LiveSession, realQuery, type QueryFn, type ResumeMode } from "./session";
 import { timingSafeEqual } from "node:crypto";
+import { getCaps, topModel } from "./caps";
 
 type WSData = { lessonId: string };
 
@@ -126,7 +127,10 @@ export function startServer(opts: { port?: number; queryFn?: QueryFn; onShutdown
         const topic = String(body.topic ?? "").trim().slice(0, 300);
         if (!topic) return json({ error: "topic required" }, 400);
         const cwd = typeof body.cwd === "string" && existsSync(body.cwd) ? resolve(body.cwd) : process.cwd();
-        const lesson = createLesson({ topic, cwd, scratch: !!body.scratch, model: body.model || undefined });
+        // No model asked for: use the most capable one this account offers.
+        const model = typeof body.model === "string" && body.model.trim() ? body.model.trim().slice(0, 80)
+          : await Promise.race([getCaps(cwd).then(c => topModel(c.models)), Bun.sleep(8000).then(() => undefined)]);
+        const lesson = createLesson({ topic, cwd, scratch: !!body.scratch, model });
         const s = sessionFor(lesson.id)!;
         s.send("", { first: true, context: typeof body.context === "string" ? body.context : undefined });
         return json({ id: lesson.id, url: `http://${HOST}:${port}/l/${lesson.id}` });
@@ -171,6 +175,8 @@ export function startServer(opts: { port?: number; queryFn?: QueryFn; onShutdown
         if (!s) return ws.close();
         s.clients.add(ws);
         ws.send(JSON.stringify(s.snapshotState()));
+        if (!s.caps) void s.refreshCaps();
+        void s.refreshGit();
       },
       message(ws, raw) {
         const s = sessions.get(ws.data.lessonId);
@@ -189,6 +195,7 @@ export function startServer(opts: { port?: number; queryFn?: QueryFn; onShutdown
           case "interrupt": void s.interrupt(); break;
           case "perm": s.answerPermission(String(msg.id), msg.decision === "always" ? "always" : msg.decision === "allow" ? "allow" : "deny"); break;
           case "undo": if (!s.busy) s.undo(); break;
+          case "model": if (typeof msg.model === "string") void s.setModel(msg.model); break;
           case "rendered": if (msg.map && typeof msg.map === "object") s.setRendered(msg.map); break;
           case "transcript": ws.send(JSON.stringify({ type: "transcript-all", entries: s.lesson.transcript })); break;
         }

@@ -34,7 +34,7 @@ If you update with plain `git pull` instead, run `learn update` afterwards to re
 ```sh
 learn "how DNS resolution works"     # new lesson, Claude works in the current folder
 learn --scratch "binary search"      # new lesson in an empty scratch folder
-learn --model opus "CRDTs"           # pick the model for this lesson
+learn --model opus "CRDTs"           # pick the model (default: the most capable one your account offers)
 learn --library                      # browse past lessons
 learn --resume <id>                  # continue a lesson live
 learn stop                           # stop the background server (refuses mid-turn; --force to override)
@@ -52,22 +52,29 @@ Inside Claude Code, `/learn <topic>` writes a short summary of what you're worki
   - callouts, including *In your project*;
   - quizzes;
   - sandboxed what-if demos.
+- **Animations** fit on one screen and are laid out left to right; they scale instead of scrolling. A one-step animation is a still, marked picture with no player. When playback ends it rewinds to the start; ⏮ restarts at any time.
+- **Zoom:** the corner button on any animation or diagram (or double-click it, or <kbd>Z</kbd> on a focused animation) opens a full-window view. Click an image to do the same. Scroll to zoom, drag to pan, <kbd>+</kbd> <kbd>-</kbd> <kbd>0</kbd>. Animation controls keep working while zoomed.
+- **Side panels:** the top-bar buttons, or <kbd>[</kbd> and <kbd>]</kbd>, hide the outline and the chat. The choice is remembered.
 - **Glossary:** every acronym Claude defines is underlined wherever it appears. Hover it for the definition and an *Explain* button. The full list is under the outline.
 - **Right-click** anything in the lesson. Shift+right-click gives the browser's own menu.
-  - **Selected text:** *Ask about this* quotes it into your next message. *Explain this simply* and *Define the terms in this* send right away.
-  - **An animation:** ask about the current step, optionally with a picture of that frame attached.
-  - **A diagram:** ask about it, by its source or as a picture.
-  - **Code or an image:** quote it into your next message.
+  - **Selected text:** *Ask about this* quotes it into your next message. *Explain this simply* and *Define the terms in this* send right away. *Search the web* opens a search in a new tab.
+  - **An animation:** ask about the current step, optionally with a picture of that frame attached; zoom; open the frame as an image in a new tab.
+  - **A diagram:** ask about it, by its source or as a picture; zoom; open it as an image in a new tab.
+  - **An image:** ask about it, open it in a new tab, zoom, or copy its address.
+  - **Code:** quote it into your next message.
   - **A section:** simpler, deeper, example, quiz.
 - **Chat** (right):
   - Claude's replies are kept short; tool calls show as small chips, and a status line shows what Claude is doing.
   - Quoted context appears as chips above the message box. Backspace on an empty box removes the last chip.
   - Shortcuts: *Analogy*, *Example*, *Go deeper*, *Quiz me*, *Wrap up*.
+  - Type `/` for Claude Code's slash commands and your skills (`/compact`, `/context`, `/your-skill args`…), the same list as in the terminal. They run exactly as typed.
+  - The **model picker** next to Undo switches models right away. New lessons start on the most capable model.
   - Type `@` to mention a file. Paste or drop images (they're downscaled to 1024px before sending).
   - **Stop** interrupts Claude. **Undo** reverts Claude's last canvas change.
 - **Save or share** (top bar): download the offline copy, print or save as PDF (the lesson only), or ask Claude for a one-page summary or a short post to share.
 - **Transcript** tab: the full raw log, including every tool call and result.
 - **Permissions:** your Claude Code settings (`settings.json` allow and deny rules) apply as usual. Anything else shows an approval dialog in the page (<kbd>Y</kbd> allow once, <kbd>A</kbd> allow for the session, <kbd>N</kbd> deny).
+- **Top bar:** the folder, git branch (with the number of changed files) and, when Claude works in a git worktree, the worktree name, as in the Claude Code footer.
 - **Meter:** the context size, output tokens, cache hit rate and cost of the last turn.
 - **Light/dark:** <kbd>T</kbd> or the top-right button. The new theme spreads out in a circle from the button; diagrams and running animations keep their state.
 
@@ -82,6 +89,8 @@ Press <kbd>?</kbd> in the page for this list.
 | <kbd>S</kbd> <kbd>D</kbd> <kbd>E</kbd> <kbd>A</kbd> | Simpler / Deeper / Example / Ask, for the section in view |
 | <kbd>Q</kbd> | Quote the selected text into the next message |
 | <kbd>←</kbd> <kbd>→</kbd> <kbd>Space</kbd> <kbd>Home</kbd> <kbd>End</kbd> | Step, play and pause the focused animation |
+| <kbd>Z</kbd> | Zoom the focused animation |
+| <kbd>[</kbd> / <kbd>]</kbd> | Hide or show the outline / the chat |
 | <kbd>U</kbd> | Undo Claude's last canvas change |
 | <kbd>Esc</kbd> <kbd>Esc</kbd> | Stop Claude |
 | <kbd>T</kbd> | Switch light / dark |
@@ -110,7 +119,7 @@ learn CLI / skill ──POST──▶ Bun server (127.0.0.1:4747, token) ──A
 ```
 
 - **One tool.** Claude edits the canvas through a single tool, `mcp__learn__canvas`, which makes patch operations (add, update, append, delete, move). Its results are tiny (`ok +s3 · outline: …`), so tool output doesn't fill the context.
-- **Compact animation format.** Claude writes only the meaning of an animation. Layout, curved edges, styling and timing are computed by the player. In graph mode, a wide chain is stacked top to bottom automatically.
+- **Compact animation format.** Claude writes only the meaning of an animation. Layout, curved edges, styling and timing are computed by the player. Graph mode runs left to right and the drawing scales to fit the screen.
   ```
   A = Call stack
   B = Web APIs (round)
@@ -167,7 +176,7 @@ The e2e tests need a Playwright browser: `bunx playwright install chromium-headl
 | Path | What |
 |---|---|
 | `bin/learn` | CLI: starts the server, creates lessons and opens the browser |
-| `server/` | HTTP + WebSocket server, Agent SDK session, canvas tool, store, offline export |
+| `server/` | HTTP + WebSocket server, Agent SDK session, canvas tool, store, offline export, model/command list (`caps.ts`), git info (`git.ts`) |
 | `web/runtime/` | Shared by the live page and saved files: data types, renderer, widgets, animation format, layout and player |
 | `web/app.ts` | Live page (chat, canvas, permissions, library) |
 | `web/offline.ts`, `web/index-offline.ts` | Runtimes inlined into saved HTML files |

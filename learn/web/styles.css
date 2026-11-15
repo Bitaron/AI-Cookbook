@@ -117,7 +117,13 @@ body.is-busy .brand-mark::after { animation-duration: 1.4s; }
 }
 .lesson-title:hover { background: var(--panel); }
 .lesson-title[contenteditable="true"] { outline: 1px solid var(--rule); background: var(--panel); color: var(--ink); }
-.meta { color: var(--muted); font-size: 13px; white-space: nowrap; display: flex; gap: 12px; }
+.meta { color: var(--muted); font-size: 13px; white-space: nowrap; display: flex; gap: 10px; align-items: center; min-width: 0; }
+.meta-dir { overflow: hidden; text-overflow: ellipsis; max-width: 22ch; }
+.meta-git { display: inline-flex; align-items: center; gap: 5px; font: 12px var(--mono); color: var(--ink-soft); }
+.meta-git svg { width: 13px; height: 13px; fill: none; stroke: var(--mint); stroke-width: 1.4; stroke-linecap: round; }
+.meta-git i { font-style: normal; color: var(--amber); margin-left: 2px; }
+.meta-wt { font: 11.5px var(--mono); color: var(--violet); border: 1px solid color-mix(in srgb, var(--violet) 45%, var(--rule)); border-radius: 999px; padding: 1px 8px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .tabs { display: flex; gap: 2px; background: var(--panel); border: 1px solid var(--rule); border-radius: 9px; padding: 2px; }
 .tabs button { border: 0; background: none; padding: 4px 12px; border-radius: 7px; font-size: 13px; color: var(--muted); transition: background .2s, color .2s; }
 .tabs button.is-on { background: var(--panel-2); color: var(--ink); box-shadow: 0 1px 2px var(--shadow-c); }
@@ -142,7 +148,16 @@ body.is-busy .brand-mark::after { animation-duration: 1.4s; }
 .live-banner .seg button.is-on { border-color: var(--amber); color: var(--amber); background: var(--amber-soft); }
 
 /* ---------- three-column layout ---------- */
-.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr) 392px; height: calc(100vh - 54px); }
+.layout {
+  --outline-w: 236px; --chat-w: 392px;
+  display: grid; grid-template-columns: var(--outline-w) minmax(0, 1fr) var(--chat-w); height: calc(100vh - 54px);
+  transition: grid-template-columns .25s var(--ease);
+}
+.layout.no-outline { --outline-w: 0px; }
+.layout.no-chat { --chat-w: 0px; }
+.layout.no-outline > .outline, .layout.no-chat > .chat { visibility: hidden; overflow: hidden; padding-left: 0; padding-right: 0; border: 0; }
+.panel-btn.is-off { color: var(--muted); opacity: .6; }
+.panel-btn:not(.is-off) { color: var(--ink-soft); }
 .live-banner:not([hidden]) + .layout { height: calc(100vh - 54px - 44px); }
 
 .outline { border-right: 1px solid var(--rule); padding: 26px 12px 26px 16px; overflow-y: auto; font-size: 13.5px; }
@@ -298,14 +313,16 @@ figcaption p { margin: 0; }
 }
 .anim:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
 .anim-stage {
-  padding: 22px 16px 14px; display: flex; justify-content: safe center; overflow-x: auto;
+  padding: 22px 16px 14px; display: flex; justify-content: center; align-items: center; overflow: hidden; position: relative;
   background-color: var(--panel);
   background-image:
     linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px),
     radial-gradient(ellipse at 50% 0%, var(--amber-soft), transparent 60%);
   background-size: 24px 24px, 24px 24px, 100% 100%;
 }
-.anim-svg { width: 100%; height: auto; overflow: visible; font-family: var(--sans); }
+/* Fit the whole player (stage + caption + controls) in one screen: the drawing scales, it never scrolls. */
+.anim-svg { width: 100%; height: auto; max-height: max(220px, min(60vh, calc(100vh - 300px))); overflow: visible; font-family: var(--sans); }
+.anim.is-still .anim-svg { max-height: max(220px, min(66vh, calc(100vh - 220px))); }
 .anim-node-body { transform-box: fill-box; transform-origin: center; transition: transform .55s cubic-bezier(.3, 1.4, .5, 1), opacity .45s var(--ease); }
 .anim-shape { stroke: var(--line-strong); stroke-width: 1.3; filter: drop-shadow(0 6px 12px var(--shadow-c)); transition: stroke .35s, stroke-width .35s, fill .35s, filter .35s; }
 .anim-label { fill: var(--ink); font: 500 13.5px var(--sans); }
@@ -369,8 +386,9 @@ figcaption p { margin: 0; }
 .anim-controls svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .anim-controls .anim-play { width: 38px; height: 38px; background: var(--amber); border-color: var(--amber); color: var(--bg); }
 .anim-play svg path { fill: currentColor; stroke: none; }
-.anim-play .i-pause, .anim.is-playing .anim-play .i-play { display: none; }
-.anim.is-playing .anim-play .i-pause { display: block; }
+.anim-play .i-pause, .anim-play .i-replay, .anim.is-playing .anim-play .i-play, .anim.is-end .anim-play .i-play { display: none; }
+.anim.is-playing .anim-play .i-pause, .anim.is-end .anim-play .i-replay { display: block; }
+.anim-play svg path.i-replay { fill: none; stroke: currentColor; stroke-width: 1.9; }
 .anim-track { display: flex; gap: 5px; flex: 1; margin: 0 10px; min-width: 60px; }
 .anim-seg { flex: 1; height: 18px; border: 0; padding: 0; background: none; display: grid; align-items: center; }
 .anim-seg i { display: block; height: 4px; border-radius: 4px; background: var(--rule); position: relative; overflow: hidden; transition: background .3s; }
@@ -382,6 +400,53 @@ figcaption p { margin: 0; }
 @keyframes fillseg { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 .anim-count { font: 12px var(--mono); color: var(--muted); min-width: 44px; text-align: right; }
 .anim-errors { padding: 0 18px 12px; color: var(--rose); font-size: 12.5px; }
+.anim.is-still .anim-caption { padding-bottom: 14px; }
+
+/* ---------- zoom: buttons on diagrams/animations, full-window lightbox ---------- */
+.mermaid-svg { position: relative; }
+.zoom-btn {
+  position: absolute; top: 10px; right: 10px; z-index: 2; display: grid; place-items: center; width: 30px; height: 30px; padding: 0;
+  border-radius: 8px; border: 1px solid var(--rule); background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--muted);
+  opacity: 0; transition: opacity .18s, color .18s, border-color .18s;
+}
+.zoom-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.anim:hover .zoom-btn, .anim:focus-within .zoom-btn, .mermaid-svg:hover .zoom-btn, .zoom-btn:focus-visible { opacity: 1; }
+.zoom-btn:hover { color: var(--ink); border-color: var(--line); }
+@media (hover: none) { .zoom-btn { opacity: 1; } }
+.sec-body img { max-width: 100%; border-radius: 10px; }
+.sec-body img.is-zoomable { cursor: zoom-in; }
+
+.lb-back {
+  position: fixed; inset: 0; z-index: 85; background: rgba(8, 9, 14, 0.62); backdrop-filter: blur(4px);
+  display: grid; padding: 22px; opacity: 0; transition: opacity .18s;
+}
+.lb-back.is-in { opacity: 1; }
+.lb {
+  display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--panel); border: 1px solid var(--rule);
+  border-radius: 16px; box-shadow: var(--shadow); overflow: hidden;
+}
+.lb-bar { display: flex; align-items: center; gap: 6px; padding: 8px 10px 8px 16px; border-bottom: 1px solid var(--rule); }
+.lb-title { flex: 1; font: italic 14px var(--serif); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lb-bar button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border-radius: 8px; border: 1px solid var(--rule); background: var(--panel-2); color: var(--ink-soft); }
+.lb-bar button:hover { color: var(--ink); border-color: var(--line); }
+.lb-bar svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.lb-pct { font: 12px var(--mono); color: var(--muted); min-width: 46px; text-align: center; }
+.lb-view { flex: 1; min-height: 0; overflow: hidden; display: grid; place-items: center; position: relative; }
+.lb-view.is-zoomed, .anim.is-expanded .anim-stage.is-zoomed { cursor: grab; }
+.lb-view.is-dragging, .anim.is-expanded .anim-stage.is-dragging { cursor: grabbing; }
+.lb-content { max-width: 100%; max-height: 100%; }
+.lb-hint { font-size: 12px; color: var(--muted); text-align: center; padding: 6px; border-top: 1px solid var(--rule); }
+.lb-image img { display: block; max-width: calc(100vw - 80px); max-height: calc(100vh - 150px); object-fit: contain; }
+.lb-content.lb-diagram { padding: 20px; border: 0; border-radius: 0; width: 100%; height: 100%; display: grid; place-items: center; }
+.lb-diagram svg { width: min(100%, 1600px) !important; max-width: none !important; height: auto; max-height: calc(100vh - 190px); }
+/* An animation moved into the lightbox keeps its own controls; only the drawing zooms. */
+.lb-view:has(.anim) { display: flex; }
+.lb-view:has(.anim) .lb-content { width: 100%; height: 100%; max-height: none; }
+.anim.is-expanded { width: 100%; height: 100%; display: flex; flex-direction: column; border: 0; border-radius: 0; box-shadow: none; }
+.anim.is-expanded .anim-stage { flex: 1; min-height: 0; padding: 18px; }
+.anim.is-expanded .anim-svg { max-height: 100%; height: 100%; max-width: none !important; }
+.anim.is-expanded .zoom-btn { display: none; }
+body.lb-open { overflow: hidden; }
 @keyframes nodepulse { 50% { stroke: var(--mint); stroke-width: 4; filter: drop-shadow(0 0 16px var(--mint-glow)); } }
 
 /* ---------- formula ---------- */
@@ -495,7 +560,7 @@ figcaption p { margin: 0; }
 .chip button:hover { color: var(--ink); background: var(--rule); }
 .input-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .input-row .spacer { flex: 1; }
-.hint { font-size: 12px; color: var(--muted); }
+.hint { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; }
 .send-btn, .stop-btn, .undo-btn { border: 1px solid var(--rule); border-radius: 9px; padding: 5px 13px; font-size: 13px; background: var(--bg); transition: opacity .2s, transform .1s; }
 .send-btn { background: var(--amber); color: var(--bg); border-color: var(--amber); font-weight: 650; }
 .send-btn:active:not(:disabled), .stop-btn:active { transform: scale(.96); }
@@ -506,7 +571,22 @@ figcaption p { margin: 0; }
 .meter span[title] { cursor: help; }
 .mentions { position: absolute; bottom: 100%; left: 12px; right: 12px; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; box-shadow: var(--shadow); max-height: 240px; overflow-y: auto; font: 13px var(--mono); }
 .mentions div { padding: 6px 10px; cursor: pointer; }
+.mentions div b { font-weight: 500; }
 .mentions div.is-on, .mentions div:hover { background: var(--panel-2); color: var(--amber); }
+.mentions.is-cmd { max-height: 300px; }
+.mentions.is-cmd div { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; }
+.mentions .pop-hint { color: var(--muted); font-size: 12px; }
+.mentions .pop-desc { grid-column: 1 / -1; font: 12px/1.35 var(--sans); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mentions div.pop-empty { color: var(--muted); cursor: default; font-family: var(--sans); }
+.model-pick { display: inline-flex; min-width: 0; }
+.model-select {
+  appearance: none; border: 1px solid var(--rule); border-radius: 9px; background: var(--bg); color: var(--ink-soft);
+  font: 12px var(--mono); padding: 5px 24px 5px 9px; max-width: 150px; cursor: pointer; text-overflow: ellipsis;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 13px) 52%, calc(100% - 9px) 52%; background-size: 4px 4px; background-repeat: no-repeat;
+}
+.model-select:hover { border-color: var(--line); color: var(--ink); }
+.model-select option { background: var(--panel); color: var(--ink); }
 
 /* ---------- right-click menu, toast ---------- */
 .ctx-menu {
@@ -579,11 +659,13 @@ figcaption p { margin: 0; }
 
 /* ---------- small screens ---------- */
 @media (max-width: 1180px) {
-  .layout { grid-template-columns: minmax(0, 1fr) 350px; }
-  .outline { display: none; }
+  .layout { --outline-w: 0px; --chat-w: 350px; }
+  .layout.no-chat { --chat-w: 0px; }
+  .outline, .outline-toggle { display: none; }
 }
 @media (max-width: 780px) {
   .layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) 48vh; }
+  .layout.no-chat { grid-template-rows: minmax(0, 1fr) 0; }
   .chat { border-left: 0; border-top: 1px solid var(--rule); }
   .meta, .hint { display: none; }
   .sec { grid-template-columns: 1fr; }
@@ -598,7 +680,7 @@ figcaption p { margin: 0; }
 /* ---------- print / PDF: the lesson only ---------- */
 @media print {
   :root, [data-theme] { --bg: #fff; --panel: #fff; --panel-2: #f4f4f0; --ink: #111; --ink-soft: #222; --muted: #555; --rule: #ccc; --code-bg: #f4f4f0; --node-top: #fff; --node-bot: #f4f4f0; --node-fill: #fff; --shadow-c: transparent; }
-  .topbar, .outline, .chat, .live-banner, .sec-tools, .anim-controls, .transcript, .toast-root, .menu-root { display: none !important; }
+  .topbar, .outline, .chat, .live-banner, .sec-tools, .anim-controls, .transcript, .toast-root, .menu-root, .zoom-btn, .lb-back { display: none !important; }
   .layout { display: block; height: auto; }
   .canvas { overflow: visible; padding: 0; }
   .sec { break-inside: avoid-page; margin-bottom: 36px; }
