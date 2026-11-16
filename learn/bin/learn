@@ -15,7 +15,8 @@ Usage
   learn --resume <id>            reopen a saved lesson (live)
   learn --library                open your lesson library
   learn server                   run the server in the foreground
-  learn stop                     stop the background server
+  learn stop                     stop the background server (refuses while Claude is mid-turn)
+  learn update                   pull the latest learn, rebuild, and restart the server safely
 
 Options
   --scratch                      work in an empty scratch folder instead of the current one
@@ -23,6 +24,8 @@ Options
   --context-file <path>          extra context for the first message (used by /learn)
   --cwd <dir>                    folder Claude works in (default: current folder)
   --no-open                      print the URL instead of opening a browser
+  --check                        with update: show what would change, change nothing
+  --force                        with stop/update: don't wait for Claude to finish a turn
 `;
 
 const { values, positionals } = parseArgs({
@@ -31,6 +34,7 @@ const { values, positionals } = parseArgs({
     resume: { type: "string" }, library: { type: "boolean" }, scratch: { type: "boolean" },
     model: { type: "string" }, "context-file": { type: "string" }, cwd: { type: "string" },
     "no-open": { type: "boolean" }, help: { type: "boolean", short: "h" },
+    check: { type: "boolean" }, force: { type: "boolean" },
   },
 });
 
@@ -72,13 +76,159 @@ function openUrl(url: string) {
 }
 const withToken = (url: string) => `${url}${url.includes("?") ? "&" : "?"}t=${encodeURIComponent(token)}`;
 
+// ---------- stop / update ----------
+type ServerInfo = { code: string | null; pid: number; root: string; busy: string[] };
+
+function sh(cmd: string[], quiet = true) {
+  const r = Bun.spawnSync(cmd, { cwd: ROOT, stdout: quiet ? "pipe" : "inherit", stderr: quiet ? "pipe" : "inherit" });
+  return { ok: r.exitCode === 0, out: r.stdout?.toString().trim() ?? "", err: r.stderr?.toString().trim() ?? "" };
+}
+const git = (...args: string[]) => sh(["git", ...args]);
+
+function serviceActive(): boolean {
+  if (!Bun.which("systemctl")) return false;
+  return sh(["systemctl", "--user", "is-active", "--quiet", "learn.service"]).ok;
+}
+
+async function serverInfo(): Promise<ServerInfo | null> {
+  try {
+    const r = await fetch(`${base}/api/server`, { headers: { "x-learn-token": token }, signal: AbortSignal.timeout(1500) });
+    return r.ok ? await r.json() as ServerInfo : null; // null from servers older than this command
+  } catch { return null; }
+}
+
+/** Asks the server to shut down cleanly; falls back to pkill for servers that predate /api/shutdown. */
+async function stopServer(force: boolean): Promise<"stopped" | "not-running" | "busy"> {
+  if (!(await healthy())) return "not-running";
+  const r = await fetch(`${base}/api/shutdown`, {
+    method: "POST", headers: { "content-type": "application/json", "x-learn-token": token }, body: JSON.stringify({ force }),
+  }).catch(() => null);
+  if (r?.status === 409) {
+    const { busy } = await r.json() as { busy: string[] };
+    console.error(`learn: Claude is still working in ${busy.join(", ")}. Wait for it to finish, or add --force.`);
+    return "busy";
+  }
+  if (!r?.ok) sh(["pkill", "-f", join(ROOT, "server", "index.ts")]);
+  for (let i = 0; i < 40; i++) {
+    if (!(await healthy())) return "stopped";
+    await Bun.sleep(150);
+  }
+  console.error("learn: the server didn't stop. Try `learn stop --force`.");
+  process.exit(1);
+}
+
+/** Waits until no lesson has a turn in progress (max 10 min). */
+async function waitIdle(force: boolean) {
+  if (force) return;
+  let said = false;
+  for (let waited = 0; waited < 600_000; waited += 2000) {
+    const info = await serverInfo();
+    if (!info || !info.busy.length) return;
+    if (!said) { console.log(`learn: waiting for Claude to finish in ${info.busy.join(", ")} (Ctrl-C to cancel, --force to skip)…`); said = true; }
+    await Bun.sleep(2000);
+  }
+  console.error("learn: still busy after 10 minutes; nothing was changed. Try again later or use --force.");
+  process.exit(1);
+}
+
+function fail(msg: string): never {
+  console.error(`learn update: ${msg}`);
+  process.exit(1);
+}
+
+function rebuild(installDeps: boolean): string | null {
+  if (installDeps) {
+    const i = sh(["bun", "install", "--frozen-lockfile"]);
+    if (!i.ok) return `bun install failed:\n${i.err || i.out}`;
+  }
+  const b = sh(["bun", join(ROOT, "scripts", "build.ts")]);
+  return b.ok ? null : `build failed:\n${b.err || b.out}`;
+}
+
+async function update() {
+  const force = !!values.force;
+  if (!git("rev-parse", "--is-inside-work-tree").ok) fail(`${ROOT} isn't a git checkout. Update it the way you installed it.`);
+  const upstream = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}");
+  if (!upstream.ok) fail("the current branch has no upstream to pull from (git branch --set-upstream-to …).");
+  const dirty = git("status", "--porcelain", "--", ".");
+  if (dirty.out) fail(`there are local changes in ${ROOT}. Commit or discard them first:\n${dirty.out}`);
+
+  console.log(`learn: checking ${upstream.out}…`);
+  const fetched = git("fetch", "--quiet");
+  if (!fetched.ok) fail(`git fetch failed:\n${fetched.err}`);
+  const old = git("rev-parse", "HEAD").out;
+  const next = git("rev-parse", "@{u}").out;
+  const behind = old !== next && git("merge-base", "--is-ancestor", "HEAD", "@{u}").ok;
+  if (old !== next && !behind && !git("merge-base", "--is-ancestor", "@{u}", "HEAD").ok) {
+    fail(`your branch and ${upstream.out} have diverged. Rebase or merge by hand, then run learn update again.`);
+  }
+  const changes = behind ? git("log", "--oneline", `${old}..${next}`, "--", ".").out : "";
+
+  const running = await healthy();
+  const info = running ? await serverInfo() : null;
+  const stale = running && (!info || (info.code !== null && info.code !== (behind ? next : old)));
+
+  if (values.check) {
+    console.log(behind ? `learn: update available (${old.slice(0, 7)} → ${next.slice(0, 7)}):\n${changes || "(no changes to learn itself)"}` : "learn: already up to date.");
+    if (stale && !behind) console.log("learn: the running server is older than the code on disk; `learn update` will restart it.");
+    return;
+  }
+  if (!behind && !stale) { console.log("learn: already up to date."); return; }
+
+  if (running) await waitIdle(force);
+
+  if (behind) {
+    const m = git("merge", "--ff-only", "--quiet", "@{u}");
+    if (!m.ok) fail(`git merge failed; nothing was changed:\n${m.err}`);
+    const depsChanged = !!git("diff", "--name-only", old, next, "--", "package.json", "bun.lock").out;
+    const err = rebuild(depsChanged);
+    if (err) {
+      console.error(`learn update: ${err}\nlearn: rolling back to ${old.slice(0, 7)}…`);
+      const back = git("reset", "--keep", old);
+      const err2 = back.ok ? rebuild(depsChanged) : back.err;
+      fail(err2 ? `rollback needs a hand: ${err2}` : `rolled back; you're still on ${old.slice(0, 7)} and the server wasn't touched.`);
+    }
+    console.log(`learn: updated ${old.slice(0, 7)} → ${next.slice(0, 7)}${changes ? `\n${changes}` : ""}`);
+  } else {
+    const err = rebuild(false);
+    if (err) fail(err);
+  }
+
+  // Restart so the server runs the new code. Lessons are saved; open pages reconnect by themselves.
+  if (serviceActive()) {
+    const busy = (await serverInfo())?.busy ?? [];
+    if (busy.length && !force) fail(`Claude started working in ${busy.join(", ")}; the code is updated, run \`learn update\` again to restart the server.`);
+    if (!sh(["systemctl", "--user", "restart", "learn.service"]).ok) fail("systemctl --user restart learn.service failed.");
+  } else if (running) {
+    const r = await stopServer(force);
+    if (r === "busy") fail("the code is updated; run `learn update` again to restart the server once Claude is done.");
+    await ensureServer();
+  } else {
+    console.log("learn: done. The server isn't running; it starts with your next lesson.");
+    return;
+  }
+  for (let i = 0; i < 50 && !(await healthy()); i++) await Bun.sleep(150);
+  const now = await serverInfo();
+  const want = git("rev-parse", "HEAD").out;
+  if (now?.code && now.code !== want) fail(`the server on port ${PORT} is running ${now.root}, not this checkout; stop it and try again.`);
+  console.log("learn: server restarted on the new code. Open lesson pages reconnect automatically.");
+}
+
 if (values.help) { console.log(HELP); process.exit(0); }
 
 if (positionals[0] === "server" && positionals.length === 1) {
   await import(join(ROOT, "server", "index.ts"));
 } else if (positionals[0] === "stop" && positionals.length === 1) {
-  const r = Bun.spawnSync(["pkill", "-f", join(ROOT, "server", "index.ts")]);
-  console.log(r.exitCode === 0 ? "learn: server stopped" : "learn: server wasn't running");
+  if (serviceActive()) {
+    sh(["systemctl", "--user", "stop", "learn.service"]);
+    console.log("learn: service stopped. It starts again at next login, or now with: systemctl --user start learn");
+  } else {
+    const r = await stopServer(!!values.force);
+    if (r === "busy") process.exit(1);
+    console.log(r === "stopped" ? "learn: server stopped" : "learn: server wasn't running");
+  }
+} else if (positionals[0] === "update" && positionals.length === 1) {
+  await update();
 } else if (values.library) {
   await ensureServer();
   openUrl(withToken(`${base}/`));

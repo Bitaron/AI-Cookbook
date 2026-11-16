@@ -5,15 +5,26 @@ import { HOST, PORT, VERSION, DIST, ROOT, getToken, ensureDirs } from "./config"
 import { createLesson, getLesson, listLessons, deleteLesson, saveLesson, lessonDir, writeIndex } from "./store";
 import { LiveSession, realQuery, type QueryFn, type ResumeMode } from "./session";
 import { timingSafeEqual } from "node:crypto";
+import { getCaps, topModel } from "./caps";
 
 type WSData = { lessonId: string };
 
-export function startServer(opts: { port?: number; queryFn?: QueryFn } = {}) {
+/** Git commit of the code this server process loaded (null outside a git checkout). Lets `learn update` spot a stale server. */
+function codeCommit(): string | null {
+  const r = Bun.spawnSync(["git", "-C", ROOT, "rev-parse", "HEAD"], { stdout: "pipe", stderr: "ignore" });
+  return r.exitCode === 0 ? r.stdout.toString().trim() || null : null;
+}
+
+export function startServer(opts: { port?: number; queryFn?: QueryFn; onShutdown?: () => void } = {}) {
   ensureDirs();
   const port = opts.port ?? PORT;
   const token = getToken();
   const queryFn = opts.queryFn ?? realQuery;
   const sessions = new Map<string, LiveSession>();
+  const code = codeCommit();
+  const startedAt = Date.now();
+  const busyLessons = () => [...sessions.entries()].filter(([, s]) => s.busy).map(([id]) => id);
+  let stopping = false;
   const allowedHosts = new Set([`${HOST}:${port}`, `localhost:${port}`]);
   const allowedOrigins = new Set([`http://${HOST}:${port}`, `http://localhost:${port}`]);
 
@@ -94,13 +105,32 @@ export function startServer(opts: { port?: number; queryFn?: QueryFn } = {}) {
         return srv.upgrade(req, { data: { lessonId: id } }) ? undefined : new Response("upgrade failed", { status: 400 });
       }
 
+      if (p === "/api/server" && req.method === "GET") {
+        return json({ version: VERSION, code, pid: process.pid, root: ROOT, startedAt, busy: busyLessons() });
+      }
+      // Graceful stop for `learn stop` / `learn update`: refuses while Claude is mid-turn unless forced.
+      if (p === "/api/shutdown" && req.method === "POST") {
+        const body = await req.json().catch(() => ({})) as any;
+        const busy = busyLessons();
+        if (busy.length && !body.force) return json({ error: "busy", busy }, 409);
+        if (!stopping) {
+          stopping = true;
+          for (const s of sessions.values()) { s.close(); saveLesson(s.lesson); }
+          setTimeout(() => { server.stop(true); (opts.onShutdown ?? (() => process.exit(0)))(); }, 50);
+        }
+        return json({ ok: true });
+      }
+
       if (p === "/api/lessons" && req.method === "GET") return json(listLessons());
       if (p === "/api/lessons" && req.method === "POST") {
         const body = await req.json().catch(() => ({})) as any;
         const topic = String(body.topic ?? "").trim().slice(0, 300);
         if (!topic) return json({ error: "topic required" }, 400);
         const cwd = typeof body.cwd === "string" && existsSync(body.cwd) ? resolve(body.cwd) : process.cwd();
-        const lesson = createLesson({ topic, cwd, scratch: !!body.scratch, model: body.model || undefined });
+        // No model asked for: use the most capable one this account offers.
+        const model = typeof body.model === "string" && body.model.trim() ? body.model.trim().slice(0, 80)
+          : await Promise.race([getCaps(cwd).then(c => topModel(c.models)), Bun.sleep(8000).then(() => undefined)]);
+        const lesson = createLesson({ topic, cwd, scratch: !!body.scratch, model });
         const s = sessionFor(lesson.id)!;
         s.send("", { first: true, context: typeof body.context === "string" ? body.context : undefined });
         return json({ id: lesson.id, url: `http://${HOST}:${port}/l/${lesson.id}` });
@@ -145,6 +175,8 @@ export function startServer(opts: { port?: number; queryFn?: QueryFn } = {}) {
         if (!s) return ws.close();
         s.clients.add(ws);
         ws.send(JSON.stringify(s.snapshotState()));
+        if (!s.caps) void s.refreshCaps();
+        void s.refreshGit();
       },
       message(ws, raw) {
         const s = sessions.get(ws.data.lessonId);
@@ -163,6 +195,7 @@ export function startServer(opts: { port?: number; queryFn?: QueryFn } = {}) {
           case "interrupt": void s.interrupt(); break;
           case "perm": s.answerPermission(String(msg.id), msg.decision === "always" ? "always" : msg.decision === "allow" ? "allow" : "deny"); break;
           case "undo": if (!s.busy) s.undo(); break;
+          case "model": if (typeof msg.model === "string") void s.setModel(msg.model); break;
           case "rendered": if (msg.map && typeof msg.map === "object") s.setRendered(msg.map); break;
           case "transcript": ws.send(JSON.stringify({ type: "transcript-all", entries: s.lesson.transcript })); break;
         }

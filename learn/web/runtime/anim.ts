@@ -1,6 +1,7 @@
 // Step-through animation player for the compact scene DSL: graph mode (boxes & arrows) and seq mode (lifelines).
 import { parseScene, frameAt, edgeKey, seqTimeline, wrapLabel, type Scene, type FrameState, type SceneNode } from "./anim-dsl";
 import { layoutScene, layoutSeq, allEdges, type Box } from "./layout";
+import { openLightbox, EXPAND_ICON } from "./zoom";
 
 const SVG = "http://www.w3.org/2000/svg";
 const el = <K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string | number> = {}, parent?: Element) => {
@@ -15,7 +16,7 @@ type Pt = { x: number; y: number };
 let uid = 0;
 
 /** Public handle stored on the host element (used by the context menu to quote a frame). */
-export interface AnimHandle { step: () => number; total: () => number; caption: () => string; png: () => Promise<string>; svg: SVGSVGElement }
+export interface AnimHandle { step: () => number; total: () => number; caption: () => string; png: () => Promise<string>; zoom: () => void; svg: SVGSVGElement }
 
 // ---------------------------------------------------------------- shapes
 function drawNode(parent: SVGGElement, n: SceneNode, w: number, h: number, gradId: string) {
@@ -130,35 +131,12 @@ function defs(svg: SVGSVGElement, id: string) {
   el("stop", { offset: "100%", style: "stop-color: var(--node-bot)" }, g);
 }
 
-/** True if any straight edge would pass through a node other than its endpoints (a sign the layout reads badly). */
-function edgesCrossNodes(scene: Scene, boxes: Map<string, Box>): boolean {
-  for (const e of allEdges(scene)) {
-    const a = boxes.get(e.from), b = boxes.get(e.to);
-    if (!a || !b) continue;
-    const p = center(a), q = center(b);
-    const steps = Math.ceil(Math.hypot(q.x - p.x, q.y - p.y) / 8);
-    for (let i = 1; i < steps; i++) {
-      const x = p.x + ((q.x - p.x) * i) / steps, y = p.y + ((q.y - p.y) * i) / steps;
-      for (const [id, r] of boxes) {
-        if (id === e.from || id === e.to) continue;
-        if (x > r.x - 4 && x < r.x + r.w + 4 && y > r.y - 4 && y < r.y + r.h + 4) return true;
-      }
-    }
-  }
-  return false;
-}
-
 // ---------------------------------------------------------------- graph mode
-function graphRenderer(scene: Scene, svg: SVGSVGElement, id: string, avail: number) {
-  let layout = layoutScene(scene);
-  // A long left-to-right chain gets tiny in a narrow column: stack it top-to-bottom when that is much narrower.
-  if (scene.dir === "LR" && avail > 0 && layout.width > avail * 1.35) {
-    const tb = layoutScene({ ...scene, dir: "TB" });
-    if (tb.width < layout.width * 0.8 && !edgesCrossNodes(scene, tb.boxes)) { scene.dir = "TB"; layout = tb; }
-  }
+function graphRenderer(scene: Scene, svg: SVGSVGElement, id: string) {
+  // Always laid out as authored (horizontal by default). The SVG scales to fit the stage, never scrolls.
+  const layout = layoutScene(scene);
   svg.setAttribute("viewBox", `0 0 ${layout.width} ${layout.height}`);
   svg.style.maxWidth = `${Math.max(layout.width * 1.15, 360)}px`;
-  svg.style.minWidth = `${Math.min(layout.width * 0.68, 1400)}px`; // keep text readable; the stage scrolls sideways if needed
   const groupLayer = el("g", { class: "anim-groups" }, svg);
   const edgeLayer = el("g", { class: "anim-edges" }, svg);
   const nodeLayer = el("g", { class: "anim-nodes" }, svg);
@@ -248,7 +226,6 @@ function seqRenderer(scene: Scene, svg: SVGSVGElement, id: string, steps: number
   const L = layoutSeq(scene, tl.rows, Math.max(0, ...tl.notes.map(n => n.text.length)));
   svg.setAttribute("viewBox", `0 0 ${L.width} ${L.height}`);
   svg.style.maxWidth = `${Math.max(L.width * 1.1, 360)}px`;
-  svg.style.minWidth = `${Math.min(L.width * 0.68, 1400)}px`;
   const life = el("g", { class: "seq-lifelines" }, svg);
   const msgLayer = el("g", { class: "seq-messages" }, svg);
   const head = el("g", { class: "anim-nodes" }, svg);
@@ -333,28 +310,44 @@ function seqRenderer(scene: Scene, svg: SVGSVGElement, id: string, steps: number
 }
 
 // ---------------------------------------------------------------- player
+const ICONS = {
+  prev: `<svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg>`,
+  next: `<svg viewBox="0 0 16 16"><path d="m6 3 5 5-5 5"/></svg>`,
+  play: `<svg viewBox="0 0 16 16"><path class="i-play" d="M5 3v10l8-5z"/><path class="i-pause" d="M5 3h2v10H5zM9 3h2v10H9z"/><path class="i-replay" d="M3.5 8a4.5 4.5 0 1 0 1.4-3.3M3.5 2.5v2.6h2.6"/></svg>`,
+  restart: `<svg viewBox="0 0 16 16"><path d="M3 3v10M13 3 6 8l7 5z"/></svg>`,
+};
+
 export function mountAnimation(host: HTMLElement, src: string) {
   const scene: Scene = parseScene(src);
   const id = `anim${++uid}`;
+  const total = Math.max(1, scene.steps.length);
+  const last = total - 1;
+  const still = scene.steps.length <= 1; // one step = a static, marked picture: no player controls
   host.classList.add("anim");
+  host.classList.toggle("is-still", still);
   host.innerHTML = "";
 
   const stage = document.createElement("div");
   stage.className = "anim-stage";
   const svg = el("svg", { role: "img", class: `anim-svg mode-${scene.mode}` });
   defs(svg, id);
-  const avail = (host.clientWidth || host.parentElement?.clientWidth || 0) - 32;
-  const draw = scene.mode === "seq" ? seqRenderer(scene, svg, id, scene.steps.length) : graphRenderer(scene, svg, id, avail);
+  const draw = scene.mode === "seq" ? seqRenderer(scene, svg, id, scene.steps.length) : graphRenderer(scene, svg, id);
   stage.appendChild(svg);
+  const zoomBtn = document.createElement("button");
+  zoomBtn.className = "zoom-btn"; zoomBtn.type = "button";
+  zoomBtn.title = "Zoom (Z)"; zoomBtn.setAttribute("aria-label", "Zoom animation");
+  zoomBtn.innerHTML = EXPAND_ICON;
+  stage.appendChild(zoomBtn);
 
   const caption = document.createElement("div");
   caption.className = "anim-caption";
   caption.setAttribute("aria-live", "polite");
   const controls = document.createElement("div");
   controls.className = "anim-controls";
-  controls.innerHTML = `<button data-act="prev" title="Previous step (←)" aria-label="Previous step"><svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5"/></svg></button>`
-    + `<button data-act="play" class="anim-play" title="Play / pause (space)" aria-label="Play"><svg viewBox="0 0 16 16"><path class="i-play" d="M5 3v10l8-5z"/><path class="i-pause" d="M5 3h2v10H5zM9 3h2v10H9z"/></svg></button>`
-    + `<button data-act="next" title="Next step (→)" aria-label="Next step"><svg viewBox="0 0 16 16"><path d="m6 3 5 5-5 5"/></svg></button>`
+  controls.innerHTML = `<button data-act="restart" title="Back to the start (Home)" aria-label="Restart">${ICONS.restart}</button>`
+    + `<button data-act="prev" title="Previous step (←)" aria-label="Previous step">${ICONS.prev}</button>`
+    + `<button data-act="play" class="anim-play" title="Play / pause (space)" aria-label="Play">${ICONS.play}</button>`
+    + `<button data-act="next" title="Next step (→)" aria-label="Next step">${ICONS.next}</button>`
     + `<div class="anim-track" role="tablist"></div><span class="anim-count"></span>`;
   const track = controls.querySelector(".anim-track") as HTMLElement;
   scene.steps.forEach((s, i) => {
@@ -365,7 +358,8 @@ export function mountAnimation(host: HTMLElement, src: string) {
     d.innerHTML = `<i></i>`;
     track.appendChild(d);
   });
-  host.append(stage, caption, controls);
+  host.append(stage, caption);
+  if (!still) host.append(controls);
   if (scene.errors.length) {
     const errs = document.createElement("details");
     errs.className = "anim-errors";
@@ -380,13 +374,26 @@ export function mountAnimation(host: HTMLElement, src: string) {
   let rafs: number[] = [];
   const count = controls.querySelector(".anim-count") as HTMLElement;
   const playBtn = controls.querySelector(".anim-play") as HTMLButtonElement;
+  const btn = (a: string) => controls.querySelector(`[data-act="${a}"]`) as HTMLButtonElement;
 
   const setCaption = (text: string) => {
+    caption.hidden = !text;
     if (caption.textContent === text) return;
     caption.classList.remove("is-in");
     void caption.offsetWidth; // restart the fade
     caption.textContent = text;
     caption.classList.add("is-in");
+  };
+
+  const syncButtons = () => {
+    const playing = !!timer;
+    const atEnd = step === last && !playing;
+    host.classList.toggle("is-end", atEnd);
+    playBtn.setAttribute("aria-label", playing ? "Pause" : atEnd ? "Replay" : "Play");
+    playBtn.title = playing ? "Pause (space)" : atEnd ? "Replay from the start (space)" : "Play (space)";
+    btn("prev").disabled = step === 0;
+    btn("next").disabled = step === last;
+    btn("restart").disabled = step === 0 && !playing;
   };
 
   const render = () => {
@@ -399,46 +406,75 @@ export function mountAnimation(host: HTMLElement, src: string) {
       d.classList.toggle("is-on", i === step);
       d.setAttribute("aria-selected", String(i === step));
     });
-    count.textContent = `${step + 1} / ${scene.steps.length}`;
-    (controls.querySelector('[data-act="prev"]') as HTMLButtonElement).disabled = step === 0;
-    (controls.querySelector('[data-act="next"]') as HTMLButtonElement).disabled = step === scene.steps.length - 1;
+    count.textContent = `${step + 1} / ${total}`;
+    syncButtons();
   };
 
-  const go = (i: number) => { step = Math.max(0, Math.min(scene.steps.length - 1, i)); render(); };
+  const go = (i: number) => { step = Math.max(0, Math.min(last, i)); render(); };
   const stop = () => {
     if (timer) clearInterval(timer);
     timer = null;
     host.classList.remove("is-playing");
-    playBtn.setAttribute("aria-label", "Play");
+    syncButtons();
+  };
+  /** Keeps the whole player (stage, caption, controls) on screen while it plays. */
+  const reveal = () => {
+    if (host.classList.contains("is-expanded")) return;
+    const r = host.getBoundingClientRect();
+    if (r.top < 0 || r.bottom > innerHeight) host.scrollIntoView({ block: r.height > innerHeight ? "start" : "nearest", behavior: reduced() ? "auto" : "smooth" });
   };
   const play = () => {
-    if (step >= scene.steps.length - 1) go(0);
+    if (step >= last) go(0);
     host.classList.add("is-playing");
     host.style.setProperty("--step-ms", `${STEP_MS}ms`);
-    playBtn.setAttribute("aria-label", "Pause");
-    timer = setInterval(() => { if (step >= scene.steps.length - 1) stop(); else go(step + 1); }, STEP_MS);
+    reveal();
+    timer = setInterval(() => {
+      // After the last step has been shown for a full beat, rewind so it is ready to play again.
+      if (step >= last) { stop(); go(0); } else go(step + 1);
+    }, STEP_MS);
+    syncButtons();
   };
+  const toggle = () => (timer ? stop() : play());
+
+  let closeZoom: (() => void) | null = null;
+  const zoom = () => {
+    if (closeZoom) { closeZoom(); return; }
+    host.classList.add("is-expanded");
+    closeZoom = openLightbox(host, {
+      move: true, title: "Animation",
+      zoomView: h => h.querySelector(".anim-stage") as HTMLElement,
+      zoomTarget: h => h.querySelector(".anim-svg") as SVGSVGElement,
+      onClose: () => { host.classList.remove("is-expanded"); closeZoom = null; },
+    });
+  };
+  zoomBtn.addEventListener("click", zoom);
+  stage.addEventListener("dblclick", ev => { if (!closeZoom && !(ev.target as Element).closest("button")) zoom(); });
 
   controls.addEventListener("click", ev => {
-    const btn = (ev.target as HTMLElement).closest("button");
-    if (!btn) return;
-    if (btn.dataset.step) { stop(); go(Number(btn.dataset.step)); }
-    else if (btn.dataset.act === "prev") { stop(); go(step - 1); }
-    else if (btn.dataset.act === "next") { stop(); go(step + 1); }
-    else if (btn.dataset.act === "play") timer ? stop() : play();
+    const b = (ev.target as HTMLElement).closest("button");
+    if (!b) return;
+    if (b.dataset.step) { stop(); go(Number(b.dataset.step)); }
+    else if (b.dataset.act === "prev") { stop(); go(step - 1); }
+    else if (b.dataset.act === "next") { stop(); go(step + 1); }
+    else if (b.dataset.act === "restart") { stop(); go(0); }
+    else if (b.dataset.act === "play") toggle();
   });
   host.tabIndex = 0;
   host.addEventListener("keydown", ev => {
-    if (ev.key === "ArrowRight") { stop(); go(step + 1); ev.preventDefault(); ev.stopPropagation(); }
-    else if (ev.key === "ArrowLeft") { stop(); go(step - 1); ev.preventDefault(); ev.stopPropagation(); }
-    else if (ev.key === " ") { timer ? stop() : play(); ev.preventDefault(); ev.stopPropagation(); }
-    else if (ev.key === "Home") { stop(); go(0); ev.preventDefault(); }
-    else if (ev.key === "End") { stop(); go(scene.steps.length - 1); ev.preventDefault(); }
+    if ((ev.target as Element).closest("button") && (ev.key === " " || ev.key === "Enter")) return; // let buttons click
+    const handled = () => { ev.preventDefault(); ev.stopPropagation(); };
+    if (ev.key === "z" || ev.key === "Z") { zoom(); handled(); return; }
+    if (still) return;
+    if (ev.key === "ArrowRight") { stop(); go(step + 1); handled(); }
+    else if (ev.key === "ArrowLeft") { stop(); go(step - 1); handled(); }
+    else if (ev.key === " ") { toggle(); handled(); }
+    else if (ev.key === "Home") { stop(); go(0); handled(); }
+    else if (ev.key === "End") { stop(); go(last); handled(); }
   });
 
   const handle: AnimHandle = {
-    svg, step: () => step, total: () => scene.steps.length, caption: () => scene.steps[step]?.caption ?? "",
-    png: () => svgToPng(svg),
+    svg, step: () => step, total: () => total, caption: () => scene.steps[step]?.caption ?? "",
+    png: () => svgToPng(svg), zoom,
   };
   (host as any).__anim = handle;
   render();

@@ -7,6 +7,8 @@ import { applyOps, canvasShape, CANVAS_DESCRIPTION, type CanvasOp } from "./canv
 import { TUTOR_PROMPT, firstMessage, seedFromOutline } from "./prompt";
 import { saveLesson } from "./store";
 import { SCRATCH_DIR } from "./config";
+import { cleanCaps, getCaps, putCaps, type Caps } from "./caps";
+import { gitInfo, type GitInfo } from "./git";
 import type { Lesson, ChatMsg } from "../web/runtime/types";
 
 export interface CanvasArgs { ops?: CanvasOp[]; lesson_title?: string; glossary?: Record<string, string> }
@@ -15,7 +17,12 @@ export interface ImageInput { mediaType: string; data: string }
 export interface Client { send(data: string): void }
 
 /** Minimal surface of the SDK Query we use (lets tests substitute a fake agent). */
-export interface AgentHandle extends AsyncIterable<any> { interrupt(): Promise<unknown> }
+export interface AgentHandle extends AsyncIterable<any> {
+  interrupt(): Promise<unknown>;
+  setModel?(model?: string): Promise<void>;
+  supportedModels?(): Promise<any[]>;
+  supportedCommands?(): Promise<any[]>;
+}
 export interface AgentCtx {
   canvas: (args: CanvasArgs) => Promise<string>;
   canUseTool: CanUseTool;
@@ -29,6 +36,9 @@ const MAX_SNAPSHOTS = 25;
 const MAX_TRANSCRIPT_TEXT = 3000;
 const IDLE_CLOSE_MS = 30 * 60_000;
 const CACHE_WINDOW_MS = 55 * 60_000;
+
+/** "/name args" typed in the chat runs a Claude Code slash command or skill, exactly as in the terminal. */
+export const isSlashCommand = (text: string) => /^\/[A-Za-z][\w:.-]*(\s|$)/.test(text);
 
 const clip = (s: string, n = MAX_TRANSCRIPT_TEXT) => (s.length > n ? `${s.slice(0, n)}… [${s.length - n} more chars]` : s);
 
@@ -73,6 +83,11 @@ export class LiveSession {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   busy = false;
   status: { model?: string; auth?: string; error?: string } = {};
+  caps: Caps | null = null;
+  git: GitInfo | null = null;
+  /** Folder Claude is working in now (changes when it enters a git worktree). */
+  workDir: string | null = null;
+  private terminalOnly: string[] = [];
 
   constructor(public lesson: Lesson, private queryFn: QueryFn = realQuery) {}
 
@@ -89,7 +104,42 @@ export class LiveSession {
       transcriptCount: l.transcript.length, canUndo: l.snapshots.length > 0, busy: this.busy, live: !!this.agent,
       status: this.status, perms: [...this.perms.values()].map(p => p.event),
       resumeHint: !this.agent && l.sessionId ? (Date.now() - l.updatedAt < CACHE_WINDOW_MS ? "full" : "outline") : null,
+      model: l.model ?? "default", caps: this.caps, git: this.git,
     };
+  }
+
+  baseDir() { return this.lesson.scratch ? join(SCRATCH_DIR, this.lesson.id) : this.lesson.cwd; }
+
+  /** Loads models and commands (from the live session if any, else a token-free probe) and tells the page. */
+  async refreshCaps() {
+    const a = this.agent;
+    try {
+      if (a?.supportedModels && a.supportedCommands) {
+        const [m, c] = await Promise.all([a.supportedModels(), a.supportedCommands()]);
+        this.caps = cleanCaps(m, c, this.terminalOnly);
+        putCaps(this.baseDir(), this.caps);
+      } else this.caps = await getCaps(this.baseDir());
+    } catch { this.caps ??= await getCaps(this.baseDir()); }
+    this.broadcast({ type: "caps", caps: this.caps, model: this.lesson.model ?? "default" });
+  }
+
+  async refreshGit() {
+    this.git = await gitInfo(this.lesson.scratch ? null : (this.workDir ?? this.lesson.cwd)).catch(() => null);
+    this.broadcast({ type: "git", git: this.git });
+  }
+
+  /** Switches the model for this lesson; applies immediately if a session is running. */
+  async setModel(model: string) {
+    const m = model.trim().slice(0, 80);
+    if (!/^[\w.:\[\]-]+$/.test(m)) return;
+    this.lesson.model = m === "default" ? undefined : m;
+    saveLesson(this.lesson, { html: false });
+    if (this.agent?.setModel) {
+      try { await this.agent.setModel(this.lesson.model); } catch (e) { this.pushChat({ role: "system", text: `Couldn't switch model: ${(e as Error).message}` }); }
+    }
+    this.status = { ...this.status, model: this.lesson.model ?? this.status.model };
+    this.broadcast({ type: "model", model: m });
+    this.broadcast({ type: "status", status: this.status });
   }
 
   private pushChat(m: Omit<ChatMsg, "ts">) {
@@ -161,7 +211,7 @@ export class LiveSession {
   // ---- agent lifecycle ------------------------------------------------------
   private start(resume: boolean) {
     const l = this.lesson;
-    const cwd = l.scratch ? join(SCRATCH_DIR, l.id) : l.cwd;
+    const cwd = this.baseDir();
     if (l.scratch) mkdirSync(cwd, { recursive: true });
     const canvasTool = tool("canvas", CANVAS_DESCRIPTION, canvasShape, async args => ({
       content: [{ type: "text" as const, text: await this.canvas(args as any) }],
@@ -182,6 +232,7 @@ export class LiveSession {
     this.input = new InputQueue();
     this.agent = this.queryFn({ prompt: this.input, options }, { canvas: this.canvas, canUseTool: this.canUseTool });
     void this.pump(this.agent);
+    void this.refreshCaps();
   }
 
   private async pump(agent: AgentHandle) {
@@ -211,6 +262,10 @@ export class LiveSession {
           l.sessionId = msg.session_id;
           this.status = { model: msg.model, auth: msg.apiKeySource === "none" ? "Claude login" : `API key (${msg.apiKeySource})` };
           this.broadcast({ type: "status", status: this.status });
+          if (Array.isArray(msg.terminal_slash_commands)) this.terminalOnly = msg.terminal_slash_commands;
+        } else if (msg.subtype === "commands_changed" && Array.isArray(msg.commands) && this.caps) {
+          this.caps = { ...this.caps, commands: cleanCaps([], msg.commands, this.terminalOnly).commands };
+          this.broadcast({ type: "caps", caps: this.caps, model: l.model ?? "default" });
         } else if (msg.subtype === "compact_boundary") this.pushTranscript("system", "Context compacted");
         break;
       case "assistant": {
@@ -238,6 +293,10 @@ export class LiveSession {
           const text = typeof b.content === "string" ? b.content
             : Array.isArray(b.content) ? b.content.map((c: any) => c.text ?? `[${c.type}]`).join("\n") : "";
           this.pushTranscript(b.is_error ? "tool_error" : "tool_result", text);
+          // Follow Claude into (or out of) a git worktree, like the Claude Code footer does.
+          const wt = /worktree at [“"]([^”"]+)[”"]/.exec(text)?.[1];
+          if (wt) { this.workDir = wt; void this.refreshGit(); }
+          else if (/^(Exited|Left|Removed) (the )?worktree/i.test(text)) { this.workDir = null; void this.refreshGit(); }
         }
         break;
       }
@@ -253,6 +312,7 @@ export class LiveSession {
         this.setBusy(false);
         saveLesson(l);
         this.broadcast({ type: "usage", usage: l.usage, title: l.title });
+        void this.refreshGit();
         this.armIdle();
         break;
       }
@@ -268,6 +328,8 @@ export class LiveSession {
   send(text: string, opts: { images?: ImageInput[]; resumeMode?: ResumeMode; context?: string; first?: boolean } = {}) {
     const l = this.lesson;
     let prompt = opts.first ? firstMessage(l.topic, opts.context) : text;
+    // Slash commands must reach Claude Code verbatim; any notes we'd prepend wait for the next normal message.
+    const cmd = !opts.first && isSlashCommand(text.trim());
     if (!this.agent) {
       let mode = opts.resumeMode ?? "auto";
       if (mode === "auto") mode = Date.now() - l.updatedAt < CACHE_WINDOW_MS ? "full" : "outline";
@@ -279,11 +341,14 @@ export class LiveSession {
         }).join("\n");
         const recent = l.chat.filter(m => m.role === "user" || m.role === "assistant").slice(-6)
           .map(m => `${m.role}: ${m.text.slice(0, 200)}`).join("\n");
-        prompt = `${seedFromOutline(l.title, outline || "(empty)", recent)}\n\n${prompt}`;
+        const seed = seedFromOutline(l.title, outline || "(empty)", recent);
+        if (cmd) this.pendingNote = this.pendingNote ? `${seed}\n\n${this.pendingNote}` : seed;
+        else prompt = `${seed}\n\n${prompt}`;
       }
       this.start(canResume);
     }
-    if (this.pendingNote) { prompt = `${this.pendingNote}\n\n${prompt}`; this.pendingNote = ""; }
+    if (cmd) prompt = text.trim();
+    else if (this.pendingNote) { prompt = `${this.pendingNote}\n\n${prompt}`; this.pendingNote = ""; }
 
     // Snapshot the canvas so this turn can be undone.
     l.snapshots.push(structuredClone(l.sections));
@@ -291,7 +356,7 @@ export class LiveSession {
 
     this.pushChat({ role: "user", text: opts.first ? `Teach me: ${l.topic}` : text + (opts.images?.length ? ` [${opts.images.length} image(s)]` : "") });
     this.pushTranscript("user", prompt);
-    const content: any[] = (opts.images ?? []).map(im => ({ type: "image", source: { type: "base64", media_type: im.mediaType, data: im.data } }));
+    const content: any[] = (cmd ? [] : opts.images ?? []).map(im => ({ type: "image", source: { type: "base64", media_type: im.mediaType, data: im.data } }));
     content.push({ type: "text", text: prompt });
     this.setBusy(true);
     this.input!.push({ type: "user", message: { role: "user", content }, parent_tool_use_id: null, origin: { kind: "human" } } as SDKUserMessage);

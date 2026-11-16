@@ -5,6 +5,7 @@ import { renderSection, md, esc, type RenderOpts } from "./runtime/render";
 import { hydrate, findBlock } from "./runtime/widgets";
 import { markTerms, initTermCards } from "./runtime/glossary";
 import { svgToPng, type AnimHandle } from "./runtime/anim";
+import { openLightbox, lightboxOpen } from "./runtime/zoom";
 import { $, initTheme, toggleTheme, renderOutline, trackActiveSection, chatMsgHtml, transcriptHtml, initTabs, fmtTokens, reducedMotion } from "./ui";
 import { mountLibrary, type Meta } from "./library";
 import { initMermaid, renderMermaid } from "./mermaid";
@@ -80,6 +81,10 @@ function showLesson(id: string) {
   const hashes = new Map<string, string>();
   let transcript: TranscriptEntry[] | null = null;
   const permQueue: any[] = [];
+  interface Caps { models: { value: string; displayName: string; description: string }[]; commands: { name: string; description: string; argumentHint: string }[] }
+  let caps: Caps | null = null;
+  let model = "default";
+  let git: { branch?: string; worktree?: string; root?: string; dirty?: number } | null = null;
 
   initMermaid();
   initTermCards(() => lesson?.glossary, term => send(`Explain ${term}.`));
@@ -109,8 +114,11 @@ function showLesson(id: string) {
       case "state": {
         lesson = ev.lesson as Lesson;
         setTitle(lesson.title);
-        $(".meta").textContent = lesson.cwd.split("/").slice(-2).join("/");
-        $(".meta").title = lesson.cwd;
+        git = ev.git ?? git;
+        drawMeta();
+        if (ev.caps) caps = ev.caps;
+        model = ev.model ?? model;
+        drawModels();
         log.innerHTML = "";
         lesson.chat.forEach(m => addChat(m, false));
         log.scrollTop = log.scrollHeight;
@@ -138,6 +146,9 @@ function showLesson(id: string) {
       case "usage": if (lesson) { lesson.usage = ev.usage; drawMeter(ev.usage); if (ev.title) setTitle(ev.title); } break;
       case "status": drawMeter(lesson?.usage, ev.status); banner.hidden = true; break;
       case "meta": setTitle(ev.title); break;
+      case "caps": caps = ev.caps; if (ev.model) model = ev.model; drawModels(); break;
+      case "model": model = ev.model; drawModels(); break;
+      case "git": git = ev.git; drawMeta(); break;
       case "perm": permQueue.push(ev); showNextPerm(); break;
       case "perm-done": {
         const i = permQueue.findIndex(p => p.id === ev.id);
@@ -266,7 +277,8 @@ function showLesson(id: string) {
     if (busy) { toast("Claude is still working. Press Stop or wait for it to finish."); return; }
     const ctxText = chips.filter(c => c.text).map(c => c.text).join("\n");
     const images = chips.filter(c => c.image).map(c => ({ mediaType: c.image!.mediaType, data: c.image!.data }));
-    const full = ctxText ? `${ctxText}\n\n${text}`.trim() : text;
+    // A slash command must lead the message so Claude Code runs it; quoted context becomes its argument.
+    const full = !ctxText ? text : text.startsWith("/") ? `${text}\n\n${ctxText}` : `${ctxText}\n\n${text}`.trim();
     if (!full.trim() && !images.length) return;
     wsSend({ type: "send", text: full, images, resumeMode });
     chips = []; drawChips();
@@ -276,6 +288,7 @@ function showLesson(id: string) {
   function addChip(c: CtxChip) {
     if (chips.length >= 8) { toast("That's plenty of context. Send or remove some first."); return; }
     chips.push(c); drawChips(); updateSend();
+    if (layout.classList.contains("no-chat")) setPanel("chat", true);
     toast(`Added ${c.label.toLowerCase()} to your next message`);
   }
   function drawChips() {
@@ -301,45 +314,74 @@ function showLesson(id: string) {
   undoBtn.onclick = () => wsSend({ type: "undo" });
   document.querySelectorAll<HTMLButtonElement>(".shortcuts button").forEach(b => b.addEventListener("click", () => send(b.dataset.say!)));
 
-  // ---------- @ file mentions ----------
+  // ---------- popups: @ file mentions and / commands (skills and slash commands, as in the terminal) ----------
   const mentions = $(".mentions");
-  let mentionItems: string[] = [];
+  type Pick = { label: string; insert: string; hint?: string; desc?: string };
+  let mentionItems: Pick[] = [];
   let mentionIdx = 0;
   let mentionTimer: ReturnType<typeof setTimeout> | null = null;
-  const mentionQuery = () => /(^|\s)@([\w./-]*)$/.exec(textarea.value.slice(0, textarea.selectionStart))?.[2];
+  let popupKind: "file" | "cmd" = "file";
+  const beforeCursor = () => textarea.value.slice(0, textarea.selectionStart);
+  const mentionQuery = () => /(^|\s)@([\w./-]*)$/.exec(beforeCursor())?.[2];
+  const commandQuery = () => /^\/([\w:.-]*)$/.exec(beforeCursor())?.[1];
   const drawMentions = () => {
     mentions.hidden = !mentionItems.length;
-    mentions.innerHTML = mentionItems.map((f, i) => `<div data-i="${i}" class="${i === mentionIdx ? "is-on" : ""}">${esc(f)}</div>`).join("");
+    mentions.classList.toggle("is-cmd", popupKind === "cmd");
+    mentions.innerHTML = mentionItems.map((m, i) => `<div data-i="${i}" class="${i === mentionIdx ? "is-on" : ""}" title="${esc(m.desc ?? "")}">`
+      + `<b>${esc(m.label)}</b>${m.hint ? ` <span class="pop-hint">${esc(m.hint)}</span>` : ""}${m.desc ? `<span class="pop-desc">${esc(m.desc)}</span>` : ""}</div>`).join("");
+    mentions.querySelector(".is-on")?.scrollIntoView({ block: "nearest" });
   };
   const pickMention = (i: number) => {
-    const f = mentionItems[i];
-    if (!f) return;
+    const m = mentionItems[i];
+    if (!m) return;
     const pos = textarea.selectionStart;
-    const before = textarea.value.slice(0, pos).replace(/@([\w./-]*)$/, `@${f} `);
+    const before = popupKind === "cmd" ? `${m.insert} ` : textarea.value.slice(0, pos).replace(/@([\w./-]*)$/, `@${m.insert} `);
     textarea.value = before + textarea.value.slice(pos);
     textarea.selectionStart = textarea.selectionEnd = before.length;
-    mentionItems = []; drawMentions(); textarea.focus();
+    mentionItems = []; drawMentions(); textarea.focus(); updateSend();
   };
-  mentions.addEventListener("mousedown", ev => { ev.preventDefault(); pickMention(Number((ev.target as HTMLElement).dataset.i)); });
+  const commandItems = (q: string): Pick[] => {
+    const lq = q.toLowerCase();
+    const all = caps?.commands ?? [];
+    const score = (n: string) => (n.toLowerCase().startsWith(lq) ? 0 : n.toLowerCase().split(":").pop()!.startsWith(lq) ? 1 : n.toLowerCase().includes(lq) ? 2 : 9);
+    return all.map(c => ({ c, k: score(c.name) })).filter(x => x.k < 9).sort((a, b) => a.k - b.k || a.c.name.localeCompare(b.c.name)).slice(0, 60)
+      .map(({ c }) => ({ label: `/${c.name}`, insert: `/${c.name}`, hint: c.argumentHint, desc: c.description }));
+  };
+  mentions.addEventListener("mousedown", ev => {
+    ev.preventDefault();
+    const i = (ev.target as HTMLElement).closest<HTMLElement>("[data-i]")?.dataset.i;
+    if (i !== undefined) pickMention(Number(i));
+  });
   textarea.addEventListener("input", () => {
     autosize(); updateSend();
+    const cq = commandQuery();
+    if (cq !== undefined) {
+      popupKind = "cmd";
+      mentionItems = commandItems(cq); mentionIdx = 0; drawMentions();
+      if (!caps) mentions.innerHTML = `<div class="pop-empty">Loading commands…</div>`, mentions.hidden = false;
+      return;
+    }
     const q = mentionQuery();
     if (q === undefined) { mentionItems = []; drawMentions(); return; }
+    popupKind = "file";
     if (mentionTimer) clearTimeout(mentionTimer);
     mentionTimer = setTimeout(async () => {
       const r = await fetch(`/api/files?id=${encodeURIComponent(id)}&q=${encodeURIComponent(q)}`);
-      mentionItems = r.ok ? await r.json() : [];
+      mentionItems = (r.ok ? ((await r.json()) as string[]) : []).map(f => ({ label: f, insert: f }));
       mentionIdx = 0; drawMentions();
     }, 120);
   });
+  textarea.addEventListener("blur", () => { mentionItems = []; drawMentions(); });
   textarea.addEventListener("keydown", ev => {
     if (!mentions.hidden && mentionItems.length) {
       if (ev.key === "ArrowDown") { mentionIdx = (mentionIdx + 1) % mentionItems.length; drawMentions(); ev.preventDefault(); return; }
       if (ev.key === "ArrowUp") { mentionIdx = (mentionIdx - 1 + mentionItems.length) % mentionItems.length; drawMentions(); ev.preventDefault(); return; }
-      if (ev.key === "Enter" || ev.key === "Tab") { pickMention(mentionIdx); ev.preventDefault(); return; }
+      // Enter on a complete command that takes no arguments sends it, as in the terminal.
+      const exact = popupKind === "cmd" && ev.key === "Enter" && mentionItems[mentionIdx]?.insert === textarea.value.trim() && !mentionItems[mentionIdx]?.hint;
+      if (!exact && (ev.key === "Enter" || ev.key === "Tab")) { pickMention(mentionIdx); ev.preventDefault(); return; }
       if (ev.key === "Escape") { mentionItems = []; drawMentions(); ev.stopPropagation(); return; }
     }
-    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); submit(); }
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); mentionItems = []; drawMentions(); submit(); }
     if (ev.key === "Escape") { textarea.blur(); ev.stopPropagation(); }
     if (ev.key === "Backspace" && !textarea.value && chips.length) { chips.pop(); drawChips(); updateSend(); }
   });
@@ -398,6 +440,15 @@ function showLesson(id: string) {
   canvas.addEventListener("scroll", closeMenu, { passive: true });
 
   const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
+  /** Like a browser's "Search the web": a new tab, with no referrer and no access back to this page. */
+  const searchWeb = (q: string) => window.open(`https://www.google.com/search?q=${encodeURIComponent(q.replace(/\s+/g, " ").trim().slice(0, 300))}`, "_blank", "noopener,noreferrer");
+  /** Opens an image in a new tab. Browsers block top-level data: URLs, so those go through a blob URL. */
+  async function openInTab(src: string) {
+    if (!src.startsWith("data:")) { window.open(src, "_blank", "noopener,noreferrer"); return; }
+    const url = URL.createObjectURL(await (await fetch(src)).blob());
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  }
   const sectionOf = (n: Node | null) => (n instanceof Element ? n : n?.parentElement)?.closest<HTMLElement>(".sec")?.dataset.id;
 
   document.addEventListener("contextmenu", async ev => {
@@ -421,6 +472,7 @@ function showLesson(id: string) {
         { label: "Explain this simply", run: () => send(`${quote}\nExplain this simply.`) },
         { label: "Define the terms in this", run: () => send(`${quote}\nDefine the technical terms in this (add them to the glossary).`) },
         { label: "Copy", run: () => navigator.clipboard?.writeText(selText) },
+        { label: `Search the web for “${clip(selText.replace(/\s+/g, " "), 24)}”`, run: () => { searchWeb(selText); } },
       );
     }
     const animHost = target.closest<HTMLElement>(".anim");
@@ -439,6 +491,9 @@ function showLesson(id: string) {
           addChip({ kind: "anim", label, text: ref, image: { mediaType: "image/png", data: url.split(",")[1]!, url } }); textarea.focus();
         } },
         { label: "Explain this step", run: () => send(`${ref}\nExplain what is happening in this step.`) },
+        "sep",
+        { label: "Zoom", hint: "Z", run: () => a.zoom() },
+        { label: "Open this step as an image in a new tab", run: async () => openInTab(await a.png()) },
       );
     } else if (diagram) {
       const svg = diagram.querySelector("svg") as SVGSVGElement | null;
@@ -457,6 +512,9 @@ function showLesson(id: string) {
           textarea.focus();
         } },
         { label: "Explain this diagram", run: () => send(`${ref}\nWalk me through this diagram.`) },
+        "sep",
+        { label: "Zoom", run: () => { openLightbox(diagram, { title: "Diagram", wrapClass: "mermaid-svg lb-diagram" }); } },
+        { label: "Open as an image in a new tab", run: async () => { if (svg) openInTab(await svgToPng(svg)); } },
       );
     } else if (img) {
       if (items.length) items.push("sep");
@@ -466,7 +524,12 @@ function showLesson(id: string) {
           addChip({ kind: "image", label: img.alt || "Image", text: `[Image in ${sid}]`, image: await imageChip(blob, img.alt) });
         } catch { addChip({ kind: "image", label: img.alt || "Image", text: `[Image in ${sid}: ${img.src}]` }); }
         textarea.focus();
-      } });
+      } },
+      "sep",
+      { label: "Open image in new tab", run: () => openInTab(img.src) },
+      { label: "Zoom image", run: () => { openLightbox(img, { title: img.alt || "Image", wrapClass: "lb-image" }); } },
+      { label: "Copy image address", run: () => navigator.clipboard?.writeText(img.src) },
+      );
     } else if (code && !selText) {
       const k = code.dataset.k;
       const b = k && lesson ? findBlock(lesson.sections, k) : undefined;
@@ -500,6 +563,7 @@ function showLesson(id: string) {
     ["Esc Esc", "Stop Claude"], ["J / K", "Next / previous section"], ["S", "Simpler (current section)"],
     ["D", "Deeper (current section)"], ["E", "Example (current section)"], ["A", "Ask about current section"],
     ["Q", "Quote selected text into the next message"], ["← / →", "Step the focused animation"], ["Space", "Play / pause the focused animation"],
+    ["Z", "Zoom the focused animation"], ["[ / ]", "Hide or show the outline / chat"],
     ["U", "Undo Claude's last canvas change"], ["T", "Switch light / dark"], ["G", "Lesson / transcript tab"],
     ["L", "Open the library"], ["?", "Show this list"],
   ];
@@ -533,7 +597,7 @@ function showLesson(id: string) {
       lastEsc = now;
       return;
     }
-    if (isTyping(ev.target) || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    if (isTyping(ev.target) || ev.ctrlKey || ev.metaKey || ev.altKey || lightboxOpen()) return;
     if ($(".modal-root").innerHTML) {
       // Permission dialog keys: Y allow once, A always, N deny (no one-key approve when the ask says so).
       const p = currentPerm && permQueue[0];
@@ -557,6 +621,8 @@ function showLesson(id: string) {
       case "u": return act(() => { if (!undoBtn.disabled) undoBtn.click(); });
       case "g": return act(() => ($(`.tabs [data-tab="${layout.classList.contains("show-transcript") ? "lesson" : "transcript"}"]`) as HTMLButtonElement).click());
       case "l": return act(() => { location.href = "/"; });
+      case "[": return act(() => togglePanel("outline"));
+      case "]": return act(() => togglePanel("chat"));
       case "q": {
         const sel = getSelection();
         const text = sel && !sel.isCollapsed ? sel.toString().trim() : "";
@@ -597,6 +663,56 @@ function showLesson(id: string) {
       status?.auth ? `<span title="How requests are authenticated">${esc(status.auth)}</span>` : "",
     ].join("");
   }
+
+  // ---------- folder + git branch / worktree (like the Claude Code footer) ----------
+  function drawMeta() {
+    if (!lesson) return;
+    const m = $(".meta");
+    const folder = lesson.scratch ? "scratch" : lesson.cwd.split("/").slice(-2).join("/");
+    // Inside a worktree the folder is the worktree itself, so the worktree badge stands in for it.
+    const parts = git?.worktree ? [] : [`<span class="meta-dir" title="${esc(lesson.cwd)}">${esc(folder)}</span>`];
+    if (git?.branch) {
+      parts.push(`<span class="meta-git" title="Git branch${git.root ? ` in ${esc(git.root)}` : ""}"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.5" r="1.6"/><circle cx="4.5" cy="12.5" r="1.6"/><circle cx="11.5" cy="5.5" r="1.6"/><path d="M4.5 5.1v5.8M11.5 7.1c0 2.4-2.2 3-7 3.8"/></svg>${esc(git.branch)}${git.dirty ? `<i title="${git.dirty} changed file${git.dirty > 1 ? "s" : ""}">±${git.dirty}</i>` : ""}</span>`);
+    }
+    if (git?.worktree) parts.push(`<span class="meta-wt" title="Working in a git worktree: ${esc(git.root ?? "")}">worktree: ${esc(git.worktree)}</span>`);
+    m.innerHTML = parts.join("");
+  }
+
+  // ---------- model picker ----------
+  const modelSel = $<HTMLSelectElement>(".model-select");
+  function drawModels() {
+    const list = [...(caps?.models ?? [])];
+    if (!list.some(m => m.value === "default")) list.unshift({ value: "default", displayName: "Default", description: "Your Claude Code setting" });
+    if (!list.some(m => m.value === model)) list.push({ value: model, displayName: model, description: "" });
+    modelSel.innerHTML = list.map(m => `<option value="${esc(m.value)}" title="${esc(m.description)}">${esc(m.displayName)}</option>`).join("");
+    modelSel.value = model;
+    modelSel.parentElement!.title = `Model: ${list.find(m => m.value === model)?.description || model}. Switches right away.`;
+  }
+  modelSel.addEventListener("change", () => {
+    model = modelSel.value;
+    wsSend({ type: "model", model });
+    toast(`Model: ${modelSel.selectedOptions[0]?.textContent ?? model}`);
+  });
+
+  // ---------- collapsible side panels ----------
+  const panelKey = (p: string) => `learn-hide-${p}`;
+  function setPanel(p: "outline" | "chat", show: boolean) {
+    layout.classList.toggle(`no-${p}`, !show);
+    const b = $(`.panel-btn[data-panel="${p}"]`);
+    b.classList.toggle("is-off", !show);
+    b.setAttribute("aria-pressed", String(show));
+    try { show ? localStorage.removeItem(panelKey(p)) : localStorage.setItem(panelKey(p), "1"); } catch { /* private mode */ }
+  }
+  const togglePanel = (p: "outline" | "chat") => setPanel(p, layout.classList.contains(`no-${p}`));
+  $(".outline-toggle").hidden = false;
+  (["outline", "chat"] as const).forEach(p => {
+    let hidden = false;
+    try { hidden = localStorage.getItem(panelKey(p)) === "1"; } catch { /* ignore */ }
+    setPanel(p, !hidden);
+    $(`.panel-btn[data-panel="${p}"]`).addEventListener("click", () => togglePanel(p));
+  });
+  // Anything that needs the message box brings the chat back.
+  textarea.addEventListener("focus", () => { if (layout.classList.contains("no-chat")) setPanel("chat", true); });
 
   // ---------- toast ----------
   let toastTimer: ReturnType<typeof setTimeout> | null = null;

@@ -185,6 +185,97 @@ test("right-click quotes text and an animation frame into the next message", asy
   await page.waitForSelector(".stop-btn[hidden]", { state: "attached" });
 });
 
+test("animation fits one screen, has restart, replays from the end", async () => {
+  const anim = page.locator(".anim").first();
+  await anim.scrollIntoViewIfNeeded();
+  const fit = await anim.evaluate(el => {
+    const st = el.querySelector(".anim-stage")!;
+    return { scrolls: st.scrollWidth > st.clientWidth + 1, h: el.getBoundingClientRect().height, vh: innerHeight };
+  });
+  expect(fit.scrolls).toBe(false);
+  expect(fit.h).toBeLessThan(fit.vh);
+  await anim.focus();
+  await page.keyboard.press("End");
+  expect(await anim.locator(".anim-play").getAttribute("aria-label")).toBe("Replay");
+  await anim.locator('[data-act="restart"]').click();
+  expect(await anim.locator(".anim-count").textContent()).toBe("1 / 3");
+  expect(await anim.locator('[data-act="restart"]').isDisabled()).toBe(true);
+});
+
+test("zoom an animation and a diagram in the lightbox", async () => {
+  const anim = page.locator(".sec[data-id='s1'] .anim");
+  await anim.hover();
+  await anim.locator(".zoom-btn").click();
+  await page.waitForSelector(".lb-back .anim.is-expanded");
+  await page.keyboard.press("+");
+  expect(await page.locator(".lb-pct").textContent()).toBe("125%");
+  await page.locator(".lb-back .anim [data-act='next']").click(); // controls still work while zoomed
+  expect(await page.locator(".lb-back .anim-count").textContent()).toBe("2 / 3");
+  await page.keyboard.press("Escape");
+  expect(await page.locator(".lb-back").count()).toBe(0);
+  expect(await page.locator(".sec[data-id='s1'] .anim .anim-count").textContent()).toBe("2 / 3"); // back in place, state kept
+  await page.locator(".mermaid-svg").first().hover();
+  await page.locator(".mermaid-svg .zoom-btn").first().click();
+  await page.waitForSelector(".lb-back .lb-diagram svg");
+  await page.keyboard.press("Escape");
+});
+
+test("side panels collapse and come back", async () => {
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press("]");
+  expect(await page.locator(".layout").getAttribute("class")).toContain("no-chat");
+  await page.locator(".chat-toggle").click();
+  expect(await page.locator(".layout").getAttribute("class")).not.toContain("no-chat");
+  await page.locator(".outline-toggle").click();
+  expect(await page.locator(".layout").getAttribute("class")).toContain("no-outline");
+  await page.keyboard.press("[");
+  expect(await page.locator(".layout").getAttribute("class")).not.toContain("no-outline");
+});
+
+test("model picker defaults to the top model and switches", async () => {
+  const sel = page.locator(".model-select");
+  expect(await sel.inputValue()).toBe("fable");
+  await sel.selectOption("sonnet");
+  await page.waitForFunction(async id => ((await (await fetch(`/api/lessons/${id}`)).json()) as any).model === "sonnet", lessonId);
+});
+
+test("git branch and worktree show in the top bar", async () => {
+  await page.waitForSelector(".meta-git");
+  const branch = (await Bun.$`git rev-parse --abbrev-ref HEAD`.quiet().text()).trim();
+  expect(await page.locator(".meta-git").textContent()).toContain(branch);
+  const linked = (await Bun.$`git rev-parse --absolute-git-dir`.quiet().text()).trim() !== (await Bun.$`git rev-parse --path-format=absolute --git-common-dir`.quiet().text()).trim();
+  expect(await page.locator(".meta-wt").count()).toBe(linked ? 1 : 0);
+});
+
+test("slash commands autocomplete and reach Claude verbatim", async () => {
+  const ta = page.locator(".composer textarea");
+  await ta.fill("");
+  await ta.pressSequentially("/cont");
+  await page.waitForSelector(".mentions.is-cmd div:has-text('/context')");
+  await page.keyboard.press("Tab");
+  expect(await ta.inputValue()).toBe("/context ");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => [...document.querySelectorAll(".sec-body")].some(b => b.textContent?.includes("You said: /context")));
+  await page.waitForSelector(".stop-btn[hidden]", { state: "attached" });
+});
+
+test("right-click a selection offers a web search", async () => {
+  await page.locator(".sec[data-id='s1'] .b-md p").scrollIntoViewIfNeeded();
+  await Bun.sleep(400);
+  await page.evaluate(() => {
+    (window as any).__opened = [];
+    window.open = ((u: string) => { (window as any).__opened.push(u); return null; }) as any;
+    const p = document.querySelector(".sec[data-id='s1'] .b-md p")!;
+    const r = document.createRange(); r.selectNodeContents(p);
+    const sel = getSelection()!; sel.removeAllRanges(); sel.addRange(r);
+  });
+  const box = (await page.locator(".sec[data-id='s1'] .b-md p").boundingBox())!;
+  await page.mouse.click(box.x + 40, box.y + 10, { button: "right" });
+  await page.locator(".ctx-menu.is-in button:has-text('Search the web')").click();
+  const opened = await page.evaluate(() => (window as any).__opened as string[]);
+  expect(opened[0]).toStartWith("https://www.google.com/search?q=JavaScript");
+});
+
 test("transcript tab shows raw log", async () => {
   await page.locator(".tabs [data-tab='transcript']").click();
   await page.waitForSelector(".tx");
@@ -205,7 +296,7 @@ test("saved lesson.html works offline", async () => {
   off.on("pageerror", e => offErrors.push(String(e)));
   await off.goto(`file://${file}`);
   await off.waitForSelector(".anim svg");
-  expect(await off.locator(".sec").count()).toBe(5);
+  expect(await off.locator(".sec").count()).toBe(6); // includes the /context follow-up
   expect(await off.locator("abbr.term").count()).toBeGreaterThan(0);
   expect(await off.locator(".mode-seq .seq-msg").count()).toBe(3);
   await off.locator('.quiz-opt[data-i="1"]').first().click();
@@ -229,4 +320,30 @@ test("library lists the lesson, static index too", async () => {
 
 test("no browser errors", () => {
   expect(errors.filter(e => !/favicon/.test(e))).toEqual([]);
+});
+
+test("server info and graceful shutdown (used by learn stop / update)", async () => {
+  expect((await fetch(`${base}/api/server`)).status).toBe(401);
+  const info = await (await api("/api/server")).json() as any;
+  expect(info.pid).toBe(process.pid);
+  expect(info.busy).toEqual([]);
+  expect(typeof info.code === "string" || info.code === null).toBe(true);
+
+  // A separate server, so the shared one stays up for the other tests.
+  let stopped = false;
+  const other = startServer({ port: PORT + 1, queryFn: fakeQuery, onShutdown: () => { stopped = true; } });
+  const o = (p: string, init: RequestInit = {}) =>
+    fetch(`http://127.0.0.1:${PORT + 1}${p}`, { ...init, headers: { "content-type": "application/json", "x-learn-token": other.token } });
+  expect((await fetch(`http://127.0.0.1:${PORT + 1}/api/shutdown`, { method: "POST" })).status).toBe(401);
+  expect((await o("/api/shutdown", { method: "GET" })).status).toBe(404);
+  const r = await o("/api/lessons", { method: "POST", body: JSON.stringify({ topic: "perm wait", cwd: process.cwd() }) });
+  const id = ((await r.json()) as any).id;
+  // "perm" makes the scripted turn wait on a permission prompt, so Claude is mid-turn: shutdown refuses unless forced.
+  const busy = await o("/api/shutdown", { method: "POST", body: "{}" });
+  expect(busy.status).toBe(409);
+  expect(((await busy.json()) as any).busy).toEqual([id]);
+  expect((await o("/api/shutdown", { method: "POST", body: JSON.stringify({ force: true }) })).status).toBe(200);
+  for (let i = 0; i < 20 && !stopped; i++) await Bun.sleep(50);
+  expect(stopped).toBe(true);
+  expect(await fetch(`http://127.0.0.1:${PORT + 1}/health`).then(() => "up", () => "down")).toBe("down");
 });

@@ -37,8 +37,8 @@ glossary{TERM:"expansion: one-line definition"} merges lesson-wide; terms get ho
 Blocks (t=):
 md{text} markdown; $tex$ / $$tex$$ math; \`\`\`mermaid fences ok
 diagram{mermaid,caption?} flowchart/sequence/state etc.
-anim{scene,caption?} step-through animation, compact DSL, one item per line:
-  mode graph|seq (seq = lifelines; each pkt becomes a timed message row, notes stay: ideal for protocols) · dir LR|TB
+anim{scene,caption?} step-through animation, compact DSL, one item per line. Exactly 1 step = a still, marked picture (no player).
+  mode graph|seq (seq = lifelines; each pkt becomes a timed message row, notes stay: ideal for protocols) · dir LR (default, keep it)|TB
   node: A = Label, optional shape suffix (round) (circle) (db) (note) (diamond) (hex) (person), optional pin @col,row · edge: A -> B "label" (label optional; -- undirected) · group G "Label": A B · prefix ! = hidden at start
   "> caption" starts a step, then actions: hl A B | dim A | pulse A | pkt A->B "label" | note A "short" | show A | hide A | label A "text" | edge A->B | unedge A->B
   (graph mode: hl/dim/pulse/pkt/note last one step, the rest persist). Keep labels and notes short; ≤5 nodes per row reads best.
@@ -48,7 +48,7 @@ formula{tex,vars?:[[sym,meaning,unit?]],caption?}
 quiz{q,options?,answer?(0-based),why?} options → auto-graded MC; no options → free answer graded by you
 compare{cols,rows}
 callout{kind:key|pitfall|analogy|tip|project,text} project = why it matters for the user's own work
-sandbox{html,height?} last resort for what-if sliders/toggles: self-contained HTML/JS, no network; use CSS vars --ink --muted --amber --mint --panel; learn.send(text) messages you.`;
+sandbox{html,height?} last resort for what-if toggles (no sliders): self-contained HTML/JS, no network; use CSS vars --ink --muted --amber --mint --panel; learn.send(text) messages you.`;
 
 export interface ApplyResult { sections: Section[]; title?: string; summary: string; errors: string[] }
 
