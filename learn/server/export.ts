@@ -16,7 +16,19 @@ function loadAssets() {
   assets = { css: read("styles.css"), offline: read("offline.js"), index: read("index-offline.js") };
   return assets;
 }
-export function resetAssetCache() { assets = null; }
+export function resetAssetCache() { assets = null; build = null; }
+
+let build: string | null = null;
+/** Identifies the page code baked into saved files; changes whenever the web bundle is rebuilt with different code. */
+export function buildId(): string {
+  if (build) return build;
+  const a = loadAssets();
+  build = Bun.hash(a.css + a.offline + a.index).toString(36);
+  return build;
+}
+const STAMP = /<meta name="learn-build" content="([^"]*)">/;
+/** True if a saved page was written by different page code than the current build. */
+export const isStaleHtml = (html: string) => STAMP.exec(html.slice(0, 2000))?.[1] !== buildId();
 
 /** JSON safe for embedding inside <script type="application/json">. */
 const LS = new RegExp(String.fromCharCode(0x2028), "g");
@@ -39,6 +51,7 @@ export function buildLessonHtml(lesson: Lesson): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="learn-build" content="${buildId()}">
 <title>${esc(lesson.title)} · learn</title>
 <style>${a.css}</style>
 ${THEME_BOOT}

@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, rmSync, mkdirSync, writeFileSync
 import { randomBytes } from "node:crypto";
 import { LESSONS_DIR, HOME, ensureDirs } from "./config";
 import { emptyUsage, type Lesson } from "../web/runtime/types";
-import { buildLessonHtml, buildIndexHtml } from "./export";
+import { buildLessonHtml, buildIndexHtml, isStaleHtml } from "./export";
 
 export function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "lesson";
@@ -87,4 +87,25 @@ export function deleteLesson(id: string) {
 
 export function writeIndex() {
   atomicWrite(join(HOME, "index.html"), buildIndexHtml(listLessons()));
+}
+
+/** Rewrites a lesson's saved page if it was built by older page code. Doesn't touch updatedAt. */
+export function refreshSavedLesson(id: string): boolean {
+  const f = join(lessonDir(id), "lesson.html");
+  if (existsSync(f) && !isStaleHtml(readFileSync(f, "utf8"))) return false;
+  const lesson = getLesson(id);
+  if (!lesson) return false;
+  atomicWrite(f, buildLessonHtml(lesson));
+  return true;
+}
+
+/** After an update, brings every saved lesson page (and the library page) up to the current page code. */
+export function refreshSavedLessons(): number {
+  ensureDirs();
+  let n = 0;
+  for (const id of readdirSync(LESSONS_DIR)) {
+    try { if (refreshSavedLesson(id)) n++; } catch { /* skip corrupt */ }
+  }
+  writeIndex();
+  return n;
 }
